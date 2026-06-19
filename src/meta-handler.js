@@ -127,7 +127,7 @@ async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epg
             name: channel.streamInfo?.tvg?.chno
                 ? `${channel.streamInfo.tvg.chno}. ${channel.name}`
                 : channel.name,
-            poster: channel.poster || channel.logo
+            poster: (channel.poster || channel.logo)
                 ? `https://images.weserv.nl/?url=${encodeURIComponent(channel.poster || channel.logo)}&w=300&h=300&fit=contain&cbg=1a1a2e`
                 : null,
             background: channel.background || channel.logo,
