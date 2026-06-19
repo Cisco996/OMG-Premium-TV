@@ -65,7 +65,7 @@ const renderConfigPage = (protocol, host, query, manifest, sessionKey = null, sh
                    color: #fff;
                    background: purple;
                }
-               ##background-video {
+               #background-video {
                    position: fixed;
                    top: 0;
                    left: 0;
