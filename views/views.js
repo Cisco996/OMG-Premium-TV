@@ -73,9 +73,17 @@ const renderConfigPage = (protocol, host, query, manifest, sessionKey = null, sh
                    height: 100%;
                    z-index: -1000;
                    background: black;
-                   object-fit: contain;
-                   filter: blur(5px) brightness(0.5);
-            }
+                   object-fit: cover;
+               }
+               #background-overlay {
+                   position: fixed;
+                   top: 0;
+                   left: 0;
+                   width: 100%;
+                   height: 100%;
+                   z-index: -999;
+                   background: rgba(13,17,23,0.84);
+               }
                .content {
                    position: relative;
                    z-index: 1;
@@ -264,6 +272,7 @@ const renderConfigPage = (protocol, host, query, manifest, sessionKey = null, sh
                <source src="https://static.vecteezy.com/system/resources/previews/001/803/236/mp4/no-signal-bad-tv-free-video.mp4" type="video/mp4">
                Il tuo browser non supporta il tag video.
            </video>
+           <div id="background-overlay"></div>
 
            <div class="content">
                <div id="langBar" style="position: absolute; top: 15px; right: 20px; font-size: 14px; color: #ccc;">
