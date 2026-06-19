@@ -135,7 +135,7 @@ async function catalogHandler({ type, id, extra, config: userConfig, cacheManage
                 id: channel.id,
                 type: 'tv',
                 name: `${channel.name} [${languageAbbr}]`,
-                poster: `https://images.weserv.nl/?url=${encodeURIComponent(channel.poster || fallbackLogo)}&w=300&h=300&fit=contain&cbg=1a1a2e`,
+                poster: `https://images.weserv.nl/?url=${encodeURIComponent(channel.poster || fallbackLogo)}&w=400&h=600&fit=contain&cbg=1a1a2e`,
                 background: channel.background || fallbackLogo,
                 logo: channel.logo || fallbackLogo,
                 description: channel.description || `Channel: ${channel.name} - ID: ${channel.streamInfo?.tvg?.id}`,
@@ -156,7 +156,7 @@ async function catalogHandler({ type, id, extra, config: userConfig, cacheManage
             if ((!meta.poster || !meta.background || !meta.logo) && channel.streamInfo?.tvg?.id) {
                 const epgIcon = epgManager.getChannelIcon(channel.streamInfo.tvg.id);
                 if (epgIcon) {
-                    meta.poster = meta.poster || `https://images.weserv.nl/?url=${encodeURIComponent(epgIcon)}&w=300&h=300&fit=contain&cbg=1a1a2e`;
+                    meta.poster = meta.poster || `https://images.weserv.nl/?url=${encodeURIComponent(epgIcon)}&w=400&h=600&fit=contain&cbg=1a1a2e`;
                     meta.background = meta.background || epgIcon;
                     meta.logo = meta.logo || epgIcon;
                 }
@@ -457,7 +457,7 @@ async function streamHandler({ id, config: userConfig, cacheManager: cm, epgMana
         if ((!meta.poster || !meta.background || !meta.logo) && channel.streamInfo?.tvg?.id) {
             const epgIcon = epgManager.getChannelIcon(channel.streamInfo.tvg.id);
             if (epgIcon) {
-                meta.poster = meta.poster || `https://images.weserv.nl/?url=${encodeURIComponent(epgIcon)}&w=300&h=300&fit=contain&cbg=1a1a2e`;
+                meta.poster = meta.poster || `https://images.weserv.nl/?url=${encodeURIComponent(epgIcon)}&w=400&h=600&fit=contain&cbg=1a1a2e`;
                 meta.background = meta.background || epgIcon;
                 meta.logo = meta.logo || epgIcon;
             }

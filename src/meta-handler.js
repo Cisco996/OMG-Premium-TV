@@ -128,7 +128,7 @@ async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epg
                 ? `${channel.streamInfo.tvg.chno}. ${channel.name}`
                 : channel.name,
             poster: (channel.poster || channel.logo)
-                ? `https://images.weserv.nl/?url=${encodeURIComponent(channel.poster || channel.logo)}&w=300&h=300&fit=contain&cbg=1a1a2e`
+                ? `https://images.weserv.nl/?url=${encodeURIComponent(channel.poster || channel.logo)}&w=400&h=600&fit=contain&cbg=1a1a2e`
                 : null,
             background: channel.background || channel.logo,
             logo: channel.logo,
@@ -148,7 +148,7 @@ async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epg
         if ((!meta.poster || !meta.background || !meta.logo) && channel.streamInfo?.tvg?.id) {
             const epgIcon = epgManager.getChannelIcon(normalizeId(channel.streamInfo.tvg.id));
             if (epgIcon) {
-                meta.poster = meta.poster || (epgIcon ? `https://images.weserv.nl/?url=${encodeURIComponent(epgIcon)}&w=300&h=300&fit=contain&cbg=1a1a2e` : null);
+                meta.poster = meta.poster || (epgIcon ? `https://images.weserv.nl/?url=${encodeURIComponent(epgIcon)}&w=400&h=600&fit=contain&cbg=1a1a2e` : null);
                 meta.background = meta.background || epgIcon;
                 meta.logo = meta.logo || epgIcon;
             } else {
