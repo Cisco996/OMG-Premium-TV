@@ -95,7 +95,7 @@ async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epg
                     logo: SETTINGS_LOGO,
                     description: t(info.description, userConfig),
                     releaseInfo: 'LIVE',
-                    posterShape: 'square',
+                    posterShape: 'poster',
                     behaviorHints: { isLive: true, defaultVideoId: fullId }
                 }
             };
@@ -135,7 +135,7 @@ async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epg
             description: '',
             releaseInfo: 'LIVE',
             genre: channel.genre,
-            posterShape: 'square',
+            posterShape: 'poster',
             language: 'ita',
             country: 'ITA',
             isFree: true,

@@ -140,7 +140,7 @@ async function catalogHandler({ type, id, extra, config: userConfig, cacheManage
                 logo: channel.logo || fallbackLogo,
                 description: channel.description || `Channel: ${channel.name} - ID: ${channel.streamInfo?.tvg?.id}`,
                 genre: channel.genre,
-                posterShape: channel.posterShape || 'square',
+                posterShape: channel.posterShape || 'poster',
                 releaseInfo: 'LIVE',
                 behaviorHints: {
                     isLive: true,
@@ -181,7 +181,7 @@ async function catalogHandler({ type, id, extra, config: userConfig, cacheManage
             logo: settingsLogo,
             description: `Channel: ${ch.name}`,
             genre: [SETTINGS_GENRE],
-            posterShape: 'square',
+            posterShape: 'poster',
             releaseInfo: 'LIVE',
             behaviorHints: { isLive: true },
             streamInfo: { tvg: { id: ch.id.replace('tv|', '') }, urls: [] }
@@ -205,7 +205,7 @@ async function catalogHandler({ type, id, extra, config: userConfig, cacheManage
                     logo: channel.logo || fallbackLogo,
                     description: channel.description || `Channel: ${channel.name}`,
                     genre: channel.genre,
-                    posterShape: channel.posterShape || 'square',
+                    posterShape: channel.posterShape || 'poster',
                     releaseInfo: 'LIVE',
                     behaviorHints: { isLive: true, ...channel.behaviorHints },
                     streamInfo: channel.streamInfo
@@ -445,7 +445,7 @@ async function streamHandler({ id, config: userConfig, cacheManager: cm, epgMana
             logo: channel.logo || fallbackLogo,
             description: channel.description || `Channel ID: ${channel.streamInfo?.tvg?.id}`,
             genre: channel.genre,
-            posterShape: channel.posterShape || 'square',
+            posterShape: channel.posterShape || 'poster',
             releaseInfo: 'LIVE',
             behaviorHints: {
                 isLive: true,

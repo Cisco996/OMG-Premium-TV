@@ -218,7 +218,7 @@ class PlaylistTransformer {
           type: 'tv',
           name: cleanName,
           genre: channel.group,
-          posterShape: 'square',
+          posterShape: 'poster',
           poster: channel.tvg?.logo,
           background: channel.tvg?.logo,
           logo: channel.tvg?.logo,
