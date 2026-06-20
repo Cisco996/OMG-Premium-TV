@@ -290,7 +290,7 @@ function enrichWithEPG(meta, channelId, userConfig, epgManager) {
 
 const PSEUDO_CHANNEL_IDS = ['rigeneraplaylistpython', 'refreshm3u', 'refreshepg'];
 
-async function streamHandler({ id, config: userConfig, cacheManager: cm, epgManager: em, pythonResolver, pythonRunner }) {
+async function streamHandler({ id, config: userConfig, cacheManager: cm, epgManager: em, pythonResolver, pythonRunner, baseUrl }) {
     const cacheManager = cm || global.CacheManager;
     const epgManager = em || require('./epg-manager');
     const runner = pythonRunner || require('./python-runner');
