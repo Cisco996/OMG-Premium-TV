@@ -2,6 +2,42 @@ const config = require('./config');
 const logger = require('./logger');
 const { I18N } = require('../views/views-i18n');
 
+// ─── Costanti placehold.co ───────────────────────────────────────────────────
+const PH_BG   = '1a1a2e'; // sfondo blu scuro
+const PH_FG   = 'cc5500'; // testo arancione scuro
+const PH_FONT = 'montserrat';
+
+// ─── Helpers immagini ────────────────────────────────────────────────────────
+
+/**
+ * Costruisce un URL weserv con fit=contain e sfondo blur.
+ * shape: 'poster' (2:3) | 'landscape' (3:2) | 'square' (1:1) | 'background' (16:9)
+ */
+function buildPosterUrl(imageUrl, shape = 'poster') {
+    if (!imageUrl) return null;
+    const base = 'https://images.weserv.nl/?url=' + encodeURIComponent(imageUrl);
+    if (shape === 'landscape')   return `${base}&w=600&h=400&fit=contain&bg=blur`;
+    if (shape === 'square')      return `${base}&w=400&h=400&fit=contain&bg=blur`;
+    if (shape === 'background')  return `${base}&w=1280&h=720&fit=contain&bg=blur`;
+    // default: poster 2:3
+    return `${base}&w=400&h=600&fit=contain&bg=blur`;
+}
+
+/**
+ * Costruisce un URL placehold.co con nome canale centrato.
+ * Sfondo #1a1a2e, testo arancione #cc5500, font Montserrat.
+ * size: es. '400x600', '600x400', '1280x720'
+ */
+function buildPlaceholderUrl(channelName, size) {
+    const label = (channelName || 'LIVE TV')
+        .substring(0, 24)
+        .trim();
+    const text = encodeURIComponent(label);
+    return `https://placehold.co/${size}/${PH_BG}/${PH_FG}.png?font=${PH_FONT}&text=${text}`;
+}
+
+// ─── i18n ────────────────────────────────────────────────────────────────────
+
 function getLangCode(userConfig) {
     const lang = (userConfig.language || config.defaultLanguage || '').toString().toLowerCase();
     if (lang.startsWith('it')) return 'it';
@@ -20,104 +56,68 @@ function normalizeId(id) {
     return beforeAt?.toLowerCase().replace(/[^\w.]/g, '').trim() || '';
 }
 
+// ─── EPG enrichment ──────────────────────────────────────────────────────────
+
 function enrichWithDetailedEPG(meta, channelId, userConfig, epgManager) {
     const epg = epgManager || require('./epg-manager');
-    if (userConfig.epg_enabled !== 'true' || !channelId) {
-        return meta;
-    }
-    // Passa channelId così getLookupIds in epg-manager può provare sia "canale5.it" sia "canale5"
-    const currentProgram = epg.getCurrentProgram(channelId);
+    if (userConfig.epg_enabled !== 'true' || !channelId) return meta;
+
+    const currentProgram  = epg.getCurrentProgram(channelId);
     const upcomingPrograms = epg.getUpcomingPrograms(channelId);
 
     if (currentProgram) {
         let description = [];
-
         description.push(t('epg_on_air', userConfig), currentProgram.title);
-
-        if (currentProgram.description) {
-            description.push('', currentProgram.description);
-        }
-
+        if (currentProgram.description) description.push('', currentProgram.description);
         description.push('', `${t('epg_time_slot_icon', userConfig)} ${currentProgram.start} - ${currentProgram.stop}`);
-
-        if (currentProgram.category) {
-            description.push(`🏷️ ${currentProgram.category}`);
-        }
+        if (currentProgram.category) description.push(`🏷️ ${currentProgram.category}`);
 
         if (upcomingPrograms?.length > 0) {
             description.push('', t('epg_upcoming', userConfig));
             upcomingPrograms.forEach(program => {
-                description.push(
-                    '',
-                    `• ${program.start} - ${program.title}`
-                );
-                if (program.description) {
-                    description.push(`  ${program.description}`);
-                }
-                if (program.category) {
-                    description.push(`  🏷️ ${program.category}`);
-                }
+                description.push('', `• ${program.start} - ${program.title}`);
+                if (program.description) description.push(`  ${program.description}`);
+                if (program.category)    description.push(`  🏷️ ${program.category}`);
             });
         }
 
         meta.description = description.join('\n');
         meta.releaseInfo = `${currentProgram.title} (${currentProgram.start})`;
-    } else {
     }
 
     return meta;
 }
 
+// ─── Pseudo-canali (Settings) ─────────────────────────────────────────────────
+
 const PSEUDO_CHANNEL_IDS = ['rigeneraplaylistpython', 'refreshm3u', 'refreshepg'];
 const PSEUDO_META = {
-    refreshm3u: { name: 'refresh_m3u_name', description: 'desc_refresh_m3u' },
-    refreshepg: { name: 'refresh_epg_name', description: 'desc_refresh_epg' },
-    rigeneraplaylistpython: { name: 'regenerate_python_name', description: 'desc_regenerate_python' }
+    refreshm3u:            { name: 'refresh_m3u_name',       description: 'desc_refresh_m3u' },
+    refreshepg:            { name: 'refresh_epg_name',       description: 'desc_refresh_epg' },
+    rigeneraplaylistpython:{ name: 'regenerate_python_name', description: 'desc_regenerate_python' }
 };
 const SETTINGS_LOGO = 'https://raw.githubusercontent.com/mccoy88f/OMG-TV-Stremio-Addon/refs/heads/main/tv.png';
 
-/**
- * Build a weserv URL that keeps the logo fully visible regardless of carousel shape.
- *
- * - poster  (2:3, 400×600): tall card → contain with dark background
- * - landscape (3:2, 600×400): wide card → contain with dark background
- * - square (1:1, 400×400): square card → contain with dark background
- *
- * `cbg` sets the canvas background color (hex without #).
- */
-function buildPosterUrl(imageUrl, shape = 'poster') {
-    if (!imageUrl) return null;
-    const base = 'https://images.weserv.nl/?url=' + encodeURIComponent(imageUrl);
-    if (shape === 'landscape') {
-        return `${base}&w=600&h=400&fit=contain&bg=blur`;
-    }
-    if (shape === 'square') {
-        return `${base}&w=400&h=400&fit=contain&bg=blur`;
-    }
-    if (shape === 'background') {
-        return `${base}&w=1280&h=720&fit=contain&bg=blur`;
-    }
-    // default: 'poster' → 2:3 tall
-    return `${base}&w=400&h=600&fit=contain&bg=blur`;
-}
+// ─── Handler principale ───────────────────────────────────────────────────────
 
 async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epgManager: em }) {
     const cacheManager = cm || global.CacheManager;
-    const epgManager = em || require('./epg-manager');
+    const epgManager   = em || require('./epg-manager');
     try {
         const channelId = (typeof id === 'string' && id.includes('|')) ? id.split('|')[1] : (id || '');
 
+        // Pseudo-canali
         if (PSEUDO_CHANNEL_IDS.includes(channelId)) {
-            const info = PSEUDO_META[channelId] || { name: channelId, description: '' };
+            const info   = PSEUDO_META[channelId] || { name: channelId, description: '' };
             const fullId = id && id.includes('|') ? id : `tv|${channelId}`;
             return {
                 meta: {
-                    id: fullId,
-                    type: 'tv',
-                    name: t(info.name, userConfig),
-                    poster: buildPosterUrl(SETTINGS_LOGO, 'poster'),
-                    background: buildPosterUrl(SETTINGS_LOGO, 'background'),
-                    logo: buildPosterUrl(SETTINGS_LOGO, 'landscape'),
+                    id:          fullId,
+                    type:        'tv',
+                    name:        t(info.name, userConfig),
+                    poster:      buildPosterUrl(SETTINGS_LOGO, 'poster'),
+                    background:  buildPosterUrl(SETTINGS_LOGO, 'background'),
+                    logo:        buildPosterUrl(SETTINGS_LOGO, 'landscape'),
                     description: t(info.description, userConfig),
                     releaseInfo: 'LIVE',
                     posterShape: 'poster',
@@ -137,70 +137,61 @@ async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epg
             await cacheManager.rebuildCache(userConfig.m3u, userConfig);
         }
 
-        // Usa direttamente getChannel dalla cache, che ora gestisce correttamente i suffissi
         const channel = cacheManager.getChannel(channelId);
+        if (!channel) return { meta: null };
 
-        if (!channel) {
-            return { meta: null };
-        }
+        const channelDisplayName = channel.name || 'LIVE TV';
 
-
+        // Placeholder pre-calcolati (usati solo se non c'è logo né da M3U né da EPG)
+        const hasLogo = !!(channel.logo || channel.poster);
+        const phPoster     = hasLogo ? null : buildPlaceholderUrl(channelDisplayName, '400x600');
+        const phLandscape  = hasLogo ? null : buildPlaceholderUrl(channelDisplayName, '600x400');
+        const phBackground = hasLogo ? null : buildPlaceholderUrl(channelDisplayName, '1280x720');
 
         const meta = {
-            id: channel.id,
+            id:   channel.id,
             type: 'tv',
             name: channel.streamInfo?.tvg?.chno
                 ? `${channel.streamInfo.tvg.chno}. ${channel.name}`
                 : channel.name,
-            // poster  → 2:3 (carosello verticale): logo contenuto su sfondo scuro
-            poster: buildPosterUrl(channel.poster || channel.logo, 'poster'),
-            // background → scheda dettaglio: 16:9 con logo contenuto (evita lo zoom eccessivo)
-            background: buildPosterUrl(channel.background || channel.logo, 'background'),
-            // logo → 3:2 (carosello orizzontale / landscape): logo contenuto su sfondo scuro
-            // Stremio mostra `logo` nei caroselli landscape; usare weserv garantisce
-            // che il logo sia sempre leggibile e non venga ritagliato.
-            logo: buildPosterUrl(channel.logo, 'landscape'),
+            poster:      buildPosterUrl(channel.poster || channel.logo, 'poster')              || phPoster,
+            background:  buildPosterUrl(channel.background || channel.logo, 'background')      || phBackground,
+            logo:        buildPosterUrl(channel.logo, 'landscape')                             || phLandscape,
             description: '',
             releaseInfo: 'LIVE',
-            genre: channel.genre,
+            genre:       channel.genre,
             posterShape: 'poster',
-            language: 'ita',
-            country: 'ITA',
-            isFree: true,
-            behaviorHints: {
-                isLive: true,
-                defaultVideoId: channel.id
-            }
+            language:    'ita',
+            country:     'ITA',
+            isFree:      true,
+            behaviorHints: { isLive: true, defaultVideoId: channel.id }
         };
 
+        // Fallback EPG
         if ((!meta.poster || !meta.background || !meta.logo) && channel.streamInfo?.tvg?.id) {
             const epgIcon = epgManager.getChannelIcon(normalizeId(channel.streamInfo.tvg.id));
             if (epgIcon) {
-                meta.poster = meta.poster || buildPosterUrl(epgIcon, 'poster');
+                meta.poster     = meta.poster     || buildPosterUrl(epgIcon, 'poster');
                 meta.background = meta.background || buildPosterUrl(epgIcon, 'background');
-                meta.logo = meta.logo || buildPosterUrl(epgIcon, 'landscape');
-            } else {
+                meta.logo       = meta.logo       || buildPosterUrl(epgIcon, 'landscape');
             }
         }
 
+        // Ultimo fallback: placeholder placehold.co
+        meta.poster     = meta.poster     || phPoster;
+        meta.background = meta.background || phBackground;
+        meta.logo       = meta.logo       || phLandscape;
+
+        // Descrizione base
         let baseDescription = [];
-
-        if (channel.streamInfo?.tvg?.chno) {
-            baseDescription.push(`📺 Channel ${channel.streamInfo.tvg.chno}`);
-        }
-
-        if (channel.description) {
-            baseDescription.push('', channel.description);
-        } else {
-            baseDescription.push('', `Channel ID: ${channel.streamInfo?.tvg?.id}`);
-        }
-
+        if (channel.streamInfo?.tvg?.chno) baseDescription.push(`📺 Channel ${channel.streamInfo.tvg.chno}`);
+        baseDescription.push('', channel.description || `Channel ID: ${channel.streamInfo?.tvg?.id}`);
         meta.description = baseDescription.join('\n');
 
         const enrichedMeta = enrichWithDetailedEPG(meta, channel.streamInfo?.tvg?.id, userConfig, epgManager);
-
         logger.log(cacheManager?.sessionKey ?? '_', 'Meta handler completed');
         return { meta: enrichedMeta };
+
     } catch (error) {
         logger.error(cacheManager?.sessionKey ?? '_', 'MetaHandler error:', error.message);
         return { meta: null };
