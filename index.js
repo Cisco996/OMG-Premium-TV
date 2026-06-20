@@ -489,6 +489,7 @@ app.get('/:resource/:type/:id/:extra?.json', async (req, res, next) => {
 // Usa Jimp (puro JS, zero dipendenze native) — funziona su HF senza modifiche al Dockerfile.
 // GET /bg-image/:encodedLogoUrl
 app.get('/bg-image/:encodedUrl', async (req, res) => {
+    const channelName = req.query.name || 'LIVE TV';
     try {
         const { Jimp } = require('jimp');
         const logoUrl = decodeURIComponent(req.params.encodedUrl);
@@ -498,8 +499,17 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
         const LOGO_MAX_W = Math.round(CANVAS_W * 0.40); // 512px
         const LOGO_MAX_H = Math.round(CANVAS_H * 0.40); // 288px
 
-        // Carica il logo da URL
-        const logo = await Jimp.read(logoUrl);
+        // Scarichiamo noi il logo con uno User-Agent "civile": alcuni host
+        // (es. upload.wikimedia.org) rifiutano richieste senza UA con HTTP 400/403,
+        // e Jimp.read(url) non permette di impostare header custom.
+        const logoResponse = await fetch(logoUrl, {
+            headers: { 'User-Agent': config.defaultUserAgent }
+        });
+        if (!logoResponse.ok) {
+            throw new Error(`HTTP Status ${logoResponse.status} for url ${logoUrl}`);
+        }
+        const logoArrayBuffer = await logoResponse.arrayBuffer();
+        const logo = await Jimp.read(Buffer.from(logoArrayBuffer));
 
         // Logo ridimensionato mantenendo le proporzioni
         const logoResized = logo.clone().scaleToFit({ w: LOGO_MAX_W, h: LOGO_MAX_H });
@@ -521,8 +531,12 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
         res.setHeader('Cache-Control', 'public, max-age=86400');
         res.send(buffer);
     } catch (e) {
-        logger.error('_', 'bg-image error:', e.message);
-        res.status(500).send('Error generating background image');
+        // Link del logo rotto/irraggiungibile (o bloccato dall'host sorgente):
+        // redirige al placeholder col nome canale invece di restituire un errore
+        // (che Stremio mostra come riquadro vuoto).
+        logger.error('_', 'bg-image error, falling back to placeholder:', e.message);
+        const label = channelName.substring(0, 24).trim();
+        res.redirect(302, `https://placehold.co/1280x720/1a1a2e/cc5500.png?font=montserrat&text=${encodeURIComponent(label)}`);
     }
 });
 
