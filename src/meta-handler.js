@@ -45,12 +45,16 @@ function buildPosterUrl(imageUrl, shape = 'poster', baseUrl = null, channelName 
 /**
  * Costruisce un URL placehold.co per canali senza logo.
  * Sfondo #1a1a2e, testo arancione #cc5500, font Montserrat — testo ingrandito.
+ * fontSize è proporzionale alla larghezza del canvas così il testo rimane
+ * ben visibile su TV indipendentemente dal formato (poster, landscape, background).
  */
 function buildPlaceholderUrl(channelName, size) {
     const label = (channelName || 'LIVE TV').substring(0, 24).trim();
     const text  = encodeURIComponent(label);
-    // fontSize=80 → testo grande e leggibile nel carosello Stremio
-    return `https://placehold.co/${size}/${PH_BG}/${PH_FG}.png?font=${PH_FONT}&text=${text}&fontSize=80`;
+    // Calcola fontSize proporzionale alla larghezza (≈ 12% della larghezza, min 60)
+    const width     = parseInt(size.split('x')[0], 10) || 400;
+    const fontSize  = Math.max(60, Math.round(width * 0.12));
+    return `https://placehold.co/${size}/${PH_BG}/${PH_FG}.png?font=${PH_FONT}&text=${text}&fontSize=${fontSize}`;
 }
 
 // ─── i18n ────────────────────────────────────────────────────────────────────
