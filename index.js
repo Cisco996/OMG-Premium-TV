@@ -569,6 +569,65 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
     }
 });
 
+// ── Placeholder interno con testo grande e word-wrap ──────────────────────────
+// GET /ph-image?name=NOME&w=400&h=600
+// Genera un SVG con sfondo scuro, testo arancione centrato e word-wrap automatico.
+// Usato al posto di placehold.co per i canali senza logo — testo sempre leggibile
+// su TV indipendentemente dal formato (poster, landscape, background).
+const phImageCache = new Map();
+app.get('/ph-image', (req, res) => {
+    const name  = (req.query.name  || 'LIVE TV').trim();
+    const w     = Math.min(Math.max(parseInt(req.query.w, 10) || 400, 100), 1920);
+    const h     = Math.min(Math.max(parseInt(req.query.h, 10) || 600, 100), 1080);
+    const cacheKey = `${w}x${h}:${name}`;
+
+    const cached = phImageCache.get(cacheKey);
+    if (cached) {
+        res.setHeader('Content-Type', 'image/svg+xml');
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        return res.send(cached);
+    }
+
+    // Font size: 8% della larghezza, min 36, max 96 — grande e leggibile su TV
+    const fontSize = Math.min(192, Math.max(72, Math.round(w * 0.16)));
+
+    // Word-wrap manuale: spezza il nome in righe che stanno nel canvas
+    // (stima ~0.55× la font-size per carattere in Montserrat bold)
+    const charW     = fontSize * 0.55;
+    const maxChars  = Math.floor((w * 0.82) / charW); // usa l'82% della larghezza
+    const words     = name.split(' ');
+    const lines     = [];
+    let cur         = '';
+    for (const word of words) {
+        const test = cur ? `${cur} ${word}` : word;
+        if (test.length > maxChars && cur) { lines.push(cur); cur = word; }
+        else cur = test;
+    }
+    if (cur) lines.push(cur);
+
+    const lineH     = fontSize * 1.25;
+    const totalH    = lines.length * lineH;
+    const startY    = (h - totalH) / 2 + fontSize * 0.85; // prima baseline centrata
+
+    const tspans = lines.map((l, i) =>
+        `<tspan x="50%" dy="${i === 0 ? 0 : lineH}">${l.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</tspan>`
+    ).join('');
+
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+  <rect width="${w}" height="${h}" fill="#1a1a2e"/>
+  <text x="50%" y="${Math.round(startY)}" text-anchor="middle"
+        font-family="Montserrat, Arial, sans-serif" font-weight="700"
+        font-size="${fontSize}" fill="#cc5500" letter-spacing="0.5">
+    ${tspans}
+  </text>
+</svg>`;
+
+    phImageCache.set(cacheKey, svg);
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.send(svg);
+});
+
 //route download template
 app.get('/api/resolver/download-template', (req, res) => {
     const PythonResolver = require('./src/python-resolver');
