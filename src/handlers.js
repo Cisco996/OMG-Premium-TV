@@ -101,7 +101,12 @@ function buildPosterUrl(imageUrl, w, h, channelName, baseUrl = null, transparent
     if (!imageUrl) return fallback;
     const defaultParam = encodeURIComponent(fallback);
     const bgParam = transparent ? '' : '&cbg=1a1a2e';
-    return `https://images.weserv.nl/?url=${encodeURIComponent(imageUrl)}&w=${w}&h=${h}&fit=contain${bgParam}&default=${defaultParam}`;
+    // Scala il logo al 60% delle dimensioni target e usa canvas= per mantenere
+    // le dimensioni finali originali — il logo appare ridotto con margini visibili
+    const logoW = Math.round(w * 0.6);
+    const logoH = Math.round(h * 0.6);
+    const canvasParam = transparent ? '' : `&canvas=${w},${h}`;
+    return `https://images.weserv.nl/?url=${encodeURIComponent(imageUrl)}&w=${logoW}&h=${logoH}&fit=contain${bgParam}${canvasParam}&default=${defaultParam}`;
 }
 
 async function catalogHandler({ type, id, extra, config: userConfig, cacheManager: cm, epgManager: em, pythonResolver, pythonRunner, baseUrl }) {
@@ -181,7 +186,7 @@ async function catalogHandler({ type, id, extra, config: userConfig, cacheManage
                 name: `${channel.name} [${languageAbbr}]`,
                 // poster → 2:3 con sfondo scuro (cbg=1a1a2e): logo ridotto nel canvas come vecchia versione
                 poster: buildPosterUrl(rawIcon, 400, 600, channel.name, baseUrl),
-                background: rawIcon ? buildPosterUrl(channel.background || channel.logo, 1280, 720, channel.name, baseUrl) : null,
+                background: buildPosterUrl(rawIcon ? (channel.background || channel.logo) : null, 1280, 720, channel.name, baseUrl),
                 // logo → 3:2 con sfondo scuro (cbg=1a1a2e): comportamento identico al poster 2:3
                 logo: buildPosterUrl(logoUrl, 600, 400, channel.name, baseUrl),
                 description: channel.description || `Channel: ${channel.name} - ID: ${channel.streamInfo?.tvg?.id}`,
@@ -489,7 +494,7 @@ async function streamHandler({ id, config: userConfig, cacheManager: cm, epgMana
             name: channel.name,
             // poster → 2:3 con sfondo scuro (cbg=1a1a2e): logo ridotto nel canvas come vecchia versione
             poster: buildPosterUrl(rawIcon, 400, 600, channel.name, baseUrl),
-            background: rawIconOk ? buildPosterUrl(channel.background || channel.logo, 1280, 720, channel.name, baseUrl) : null,
+            background: buildPosterUrl(rawIconOk ? (channel.background || channel.logo) : null, 1280, 720, channel.name, baseUrl),
             // logo → 3:2 con sfondo scuro (cbg=1a1a2e): comportamento identico al poster 2:3
             logo: buildPosterUrl(logoUrl, 600, 400, channel.name, baseUrl),
             description: channel.description || `Channel ID: ${channel.streamInfo?.tvg?.id}`,
