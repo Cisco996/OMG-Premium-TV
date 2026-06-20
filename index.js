@@ -65,8 +65,7 @@ function touchSession(sessionKey) {
 async function getCacheManager(sessionId, userConfig) {
     const key = (sessionId && String(sessionId).trim()) ? String(sessionId).trim() : getSessionKeyFromConfig(userConfig);
     if (!cacheRegistry.has(key)) {
-        const cm = await CacheManagerFactory(userConfig || {}, key === '_default' ? null : key);
-        cacheRegistry.set(key, cm);
+        cacheRegistry.set(key, await CacheManagerFactory(userConfig || {}, key === '_default' ? null : key));
     }
     const cm = cacheRegistry.get(key);
     cm.sessionKey = key;
@@ -485,93 +484,60 @@ app.get('/:resource/:type/:id/:extra?.json', async (req, res, next) => {
     }
 });
 
-// PNG nero 1280x720 — restituito istantaneamente mentre Jimp elabora in background.
-// Generato una sola volta con Jimp all'avvio (lazy, al primo utilizzo).
-let BLACK_BG = null;
-async function getBlackBg() {
-    if (BLACK_BG) return BLACK_BG;
-    const { Jimp: J } = require('jimp');
-    const img = new J({ width: 1280, height: 720, color: 0x000000ff });
-    BLACK_BG = await img.getBuffer('image/png');
-    return BLACK_BG;
-}
-
-// ─── Cache permanente in-memory per /bg-image ────────────────────────────────
-// Chiave: logoUrl → Buffer PNG già elaborato da Jimp.
-// La cache non scade: i logo sono fissi per tutta la vita del processo.
-// On-demand: elaborati al primo accesso, istantanei da quel momento in poi.
-const bgImageCache = new Map();
-
-const CANVAS_W   = 1280;
-const CANVAS_H   = 720;
-const LOGO_MAX_W = Math.round(CANVAS_W * 0.40); // 512px
-const LOGO_MAX_H = Math.round(CANVAS_H * 0.40); // 288px
-
-const { Jimp } = require('jimp');
-
-// WebP non e' supportato da Jimp v1. Se l'URL e' WebP lo convertiamo in PNG
-// tramite weserv (zero dipendenze aggiuntive) prima di passarlo a Jimp.
-function toJimpFetchUrl(logoUrl) {
-    const lower = logoUrl.toLowerCase();
-    if (lower.includes('.webp') || lower.includes('format=webp') || lower.includes('fmt=webp')) {
-        return 'https://images.weserv.nl/?url=' + encodeURIComponent(logoUrl) + '&output=png';
-    }
-    return logoUrl;
-}
-
-async function buildBgBuffer(logoUrl) {
-    let fetchUrl = toJimpFetchUrl(logoUrl);
-    let logoResponse = await fetch(fetchUrl, {
-        headers: { 'User-Agent': config.defaultUserAgent }
-    });
-    if (!logoResponse.ok) throw new Error('HTTP ' + logoResponse.status + ' for ' + fetchUrl);
-    // Secondo controllo: content-type WebP su URL senza estensione
-    const ct = logoResponse.headers.get('content-type') || '';
-    if (ct.includes('webp') && fetchUrl === logoUrl) {
-        fetchUrl = 'https://images.weserv.nl/?url=' + encodeURIComponent(logoUrl) + '&output=png';
-        logoResponse = await fetch(fetchUrl, { headers: { 'User-Agent': config.defaultUserAgent } });
-        if (!logoResponse.ok) throw new Error('WebP conversion failed: HTTP ' + logoResponse.status);
-    }
-    const logo = await Jimp.read(Buffer.from(await logoResponse.arrayBuffer()));
-    const logoResized = logo.clone().scaleToFit({ w: LOGO_MAX_W, h: LOGO_MAX_H });
-    const bg = logo.clone()
-        .cover({ w: CANVAS_W, h: CANVAS_H })
-        .blur(20)
-        .brightness(-0.5);
-    const left = Math.round((CANVAS_W - logoResized.bitmap.width)  / 2);
-    const top  = Math.round((CANVAS_H - logoResized.bitmap.height) / 2);
-    bg.composite(logoResized, left, top);
-    return bg.getBuffer('image/png');
-}
-
-
-
 // Background image: scarica il logo, lo rimpicciolisce al 40% e lo centra
 // su canvas 1280x720 con sfondo sfocato — evita l'effetto zoom di Stremio.
 // Usa Jimp (puro JS, zero dipendenze native) — funziona su HF senza modifiche al Dockerfile.
-// Il risultato è cachato permanentemente in memoria; il warmup all'avvio lo pre-popola.
 // GET /bg-image/:encodedLogoUrl
-// Cache hit  → PNG immediato.
-// Cache miss → 204 No Content (Stremio mostra nero) + elaborazione Jimp in background.
-//              Al secondo accesso la cache è pronta e la risposta è istantanea.
 app.get('/bg-image/:encodedUrl', async (req, res) => {
     const channelName = req.query.name || 'LIVE TV';
-    const logoUrl = decodeURIComponent(req.params.encodedUrl);
+    try {
+        const { Jimp } = require('jimp');
+        const logoUrl = decodeURIComponent(req.params.encodedUrl);
 
-    if (bgImageCache.has(logoUrl)) {
+        const CANVAS_W   = 1280;
+        const CANVAS_H   = 720;
+        const LOGO_MAX_W = Math.round(CANVAS_W * 0.40); // 512px
+        const LOGO_MAX_H = Math.round(CANVAS_H * 0.40); // 288px
+
+        // Scarichiamo noi il logo con uno User-Agent "civile": alcuni host
+        // (es. upload.wikimedia.org) rifiutano richieste senza UA con HTTP 400/403,
+        // e Jimp.read(url) non permette di impostare header custom.
+        const logoResponse = await fetch(logoUrl, {
+            headers: { 'User-Agent': config.defaultUserAgent }
+        });
+        if (!logoResponse.ok) {
+            throw new Error(`HTTP Status ${logoResponse.status} for url ${logoUrl}`);
+        }
+        const logoArrayBuffer = await logoResponse.arrayBuffer();
+        const logo = await Jimp.read(Buffer.from(logoArrayBuffer));
+
+        // Logo ridimensionato mantenendo le proporzioni
+        const logoResized = logo.clone().scaleToFit({ w: LOGO_MAX_W, h: LOGO_MAX_H });
+
+        // Sfondo: logo sfocato, scurito e scalato a coprire il canvas
+        const bg = logo.clone()
+            .cover({ w: CANVAS_W, h: CANVAS_H })
+            .blur(20)
+            .brightness(-0.5);
+
+        // Composizione: sfondo + logo centrato
+        const left = Math.round((CANVAS_W - logoResized.bitmap.width)  / 2);
+        const top  = Math.round((CANVAS_H - logoResized.bitmap.height) / 2);
+
+        bg.composite(logoResized, left, top);
+
+        const buffer = await bg.getBuffer('image/png');
         res.setHeader('Content-Type', 'image/png');
         res.setHeader('Cache-Control', 'public, max-age=86400');
-        return res.send(bgImageCache.get(logoUrl));
+        res.send(buffer);
+    } catch (e) {
+        // Link del logo rotto/irraggiungibile (o bloccato dall'host sorgente):
+        // redirige al placeholder col nome canale invece di restituire un errore
+        // (che Stremio mostra come riquadro vuoto).
+        logger.error('_', 'bg-image error, falling back to placeholder:', e.message);
+        const label = channelName.substring(0, 24).trim();
+        res.redirect(302, `https://placehold.co/1280x720/1a1a2e/cc5500.png?font=montserrat&text=${encodeURIComponent(label)}`);
     }
-
-    // Non ancora in cache: risponde subito con PNG nero 1280x720
-    // ed elabora in background; al secondo accesso la cache è pronta.
-    res.setHeader('Content-Type', 'image/png');
-    res.setHeader('Cache-Control', 'no-store');
-    res.send(await getBlackBg());
-    buildBgBuffer(logoUrl)
-        .then(buffer => { bgImageCache.set(logoUrl, buffer); })
-        .catch(e => logger.warn('_', `bg-image build error: ${e.message}`));
 });
 
 //route download template
