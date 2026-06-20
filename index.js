@@ -514,20 +514,31 @@ const CANVAS_H   = 720;
 const LOGO_MAX_W = Math.round(CANVAS_W * 0.40); // 512px
 const LOGO_MAX_H = Math.round(CANVAS_H * 0.40); // 288px
 
-// Jimp + plugin WebP — registrati una sola volta al primo uso del modulo
 const { Jimp } = require('jimp');
-try {
-    const { webp } = require('@jimp/js-webp');
-    Jimp.addType(webp);
-} catch (e) {
-    logger.warn('_', 'WebP plugin non disponibile, i logo .webp verranno skippati:', e.message);
+
+// WebP non e' supportato da Jimp v1. Se l'URL e' WebP lo convertiamo in PNG
+// tramite weserv (zero dipendenze aggiuntive) prima di passarlo a Jimp.
+function toJimpFetchUrl(logoUrl) {
+    const lower = logoUrl.toLowerCase();
+    if (lower.includes('.webp') || lower.includes('format=webp') || lower.includes('fmt=webp')) {
+        return 'https://images.weserv.nl/?url=' + encodeURIComponent(logoUrl) + '&output=png';
+    }
+    return logoUrl;
 }
 
 async function buildBgBuffer(logoUrl) {
-    const logoResponse = await fetch(logoUrl, {
+    let fetchUrl = toJimpFetchUrl(logoUrl);
+    let logoResponse = await fetch(fetchUrl, {
         headers: { 'User-Agent': config.defaultUserAgent }
     });
-    if (!logoResponse.ok) throw new Error(`HTTP ${logoResponse.status} for ${logoUrl}`);
+    if (!logoResponse.ok) throw new Error('HTTP ' + logoResponse.status + ' for ' + fetchUrl);
+    // Secondo controllo: content-type WebP su URL senza estensione
+    const ct = logoResponse.headers.get('content-type') || '';
+    if (ct.includes('webp') && fetchUrl === logoUrl) {
+        fetchUrl = 'https://images.weserv.nl/?url=' + encodeURIComponent(logoUrl) + '&output=png';
+        logoResponse = await fetch(fetchUrl, { headers: { 'User-Agent': config.defaultUserAgent } });
+        if (!logoResponse.ok) throw new Error('WebP conversion failed: HTTP ' + logoResponse.status);
+    }
     const logo = await Jimp.read(Buffer.from(await logoResponse.arrayBuffer()));
     const logoResized = logo.clone().scaleToFit({ w: LOGO_MAX_W, h: LOGO_MAX_H });
     const bg = logo.clone()
