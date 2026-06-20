@@ -484,6 +484,12 @@ app.get('/:resource/:type/:id/:extra?.json', async (req, res, next) => {
     }
 });
 
+// Cache in-memory per i loghi già elaborati da /bg-image.
+// Chiave: logoUrl → { buffer: Buffer, ts: Date.now() }
+// TTL: 24 ore (stessa policy del Cache-Control inviato al client).
+const bgImageCache = new Map();
+const BG_IMAGE_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+
 // Background image: scarica il logo, lo rimpicciolisce al 40% e lo centra
 // su canvas 1280x720 con sfondo sfocato — evita l'effetto zoom di Stremio.
 // Usa Jimp (puro JS, zero dipendenze native) — funziona su HF senza modifiche al Dockerfile.
@@ -493,6 +499,16 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
     try {
         const { Jimp } = require('jimp');
         const logoUrl = decodeURIComponent(req.params.encodedUrl);
+
+        // ── Cache hit ──────────────────────────────────────────────────────
+        const cached = bgImageCache.get(logoUrl);
+        if (cached && (Date.now() - cached.ts) < BG_IMAGE_CACHE_TTL_MS) {
+            res.setHeader('Content-Type', 'image/png');
+            res.setHeader('Cache-Control', 'public, max-age=86400');
+            res.setHeader('X-BgImage-Cache', 'HIT');
+            return res.send(cached.buffer);
+        }
+        // ──────────────────────────────────────────────────────────────────
 
         const CANVAS_W   = 1280;
         const CANVAS_H   = 720;
@@ -527,8 +543,21 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
         bg.composite(logoResized, left, top);
 
         const buffer = await bg.getBuffer('image/png');
+
+        // ── Salva in cache (evita ri-elaborazioni per 24h) ────────────────
+        bgImageCache.set(logoUrl, { buffer, ts: Date.now() });
+        // Pulizia lazy: rimuovi entry scadute ogni ~100 inserimenti
+        if (bgImageCache.size % 100 === 0) {
+            const now = Date.now();
+            for (const [k, v] of bgImageCache) {
+                if (now - v.ts > BG_IMAGE_CACHE_TTL_MS) bgImageCache.delete(k);
+            }
+        }
+        // ──────────────────────────────────────────────────────────────────
+
         res.setHeader('Content-Type', 'image/png');
         res.setHeader('Cache-Control', 'public, max-age=86400');
+        res.setHeader('X-BgImage-Cache', 'MISS');
         res.send(buffer);
     } catch (e) {
         // Link del logo rotto/irraggiungibile (o bloccato dall'host sorgente):
