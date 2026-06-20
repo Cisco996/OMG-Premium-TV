@@ -588,13 +588,13 @@ app.get('/ph-image', (req, res) => {
         return res.send(cached);
     }
 
-    // Font size: 8% della larghezza, min 36, max 96 — grande e leggibile su TV
-    const fontSize = Math.min(192, Math.max(72, Math.round(w * 0.16)));
+    // Font size: 22% della larghezza, min 80, max 280 — grande e leggibile su TV
+    const fontSize = Math.min(280, Math.max(80, Math.round(w * 0.22)));
 
     // Word-wrap manuale: spezza il nome in righe che stanno nel canvas
     // (stima ~0.55× la font-size per carattere in Montserrat bold)
     const charW     = fontSize * 0.55;
-    const maxChars  = Math.floor((w * 0.82) / charW); // usa l'82% della larghezza
+    const maxChars  = Math.floor((w * 0.90) / charW); // usa il 90% della larghezza
     const words     = name.split(' ');
     const lines     = [];
     let cur         = '';
@@ -605,7 +605,7 @@ app.get('/ph-image', (req, res) => {
     }
     if (cur) lines.push(cur);
 
-    const lineH     = fontSize * 1.25;
+    const lineH     = fontSize * 1.2;
     const totalH    = lines.length * lineH;
     const startY    = (h - totalH) / 2 + fontSize * 0.85; // prima baseline centrata
 
