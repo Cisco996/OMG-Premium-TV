@@ -486,59 +486,40 @@ app.get('/:resource/:type/:id/:extra?.json', async (req, res, next) => {
 
 // Background image: scarica il logo, lo rimpicciolisce al 40% e lo centra
 // su canvas 1280x720 con sfondo sfocato — evita l'effetto zoom di Stremio.
+// Usa Jimp (puro JS, zero dipendenze native) — funziona su HF senza modifiche al Dockerfile.
 // GET /bg-image/:encodedLogoUrl
 app.get('/bg-image/:encodedUrl', async (req, res) => {
     try {
-        const sharp  = require('sharp');
-        const https  = require('https');
-        const http   = require('http');
+        const Jimp = require('jimp');
         const logoUrl = decodeURIComponent(req.params.encodedUrl);
-
-        const fetchBuffer = (url) => new Promise((resolve, reject) => {
-            const client = url.startsWith('https') ? https : http;
-            client.get(url, (response) => {
-                const chunks = [];
-                response.on('data',  chunk => chunks.push(chunk));
-                response.on('end',   ()    => resolve(Buffer.concat(chunks)));
-                response.on('error', reject);
-            }).on('error', reject);
-        });
-
-        const logoBuffer = await fetchBuffer(logoUrl);
 
         const CANVAS_W   = 1280;
         const CANVAS_H   = 720;
         const LOGO_MAX_W = Math.round(CANVAS_W * 0.40); // 512px
         const LOGO_MAX_H = Math.round(CANVAS_H * 0.40); // 288px
 
+        // Carica il logo da URL
+        const logo = await Jimp.read(logoUrl);
+
         // Logo ridimensionato mantenendo le proporzioni
-        const logoResized = await sharp(logoBuffer)
-            .resize(LOGO_MAX_W, LOGO_MAX_H, { fit: 'inside' })
-            .png()
-            .toBuffer();
+        const logoResized = logo.clone().scaleToFit({ w: LOGO_MAX_W, h: LOGO_MAX_H });
 
-        const { width: logoW, height: logoH } = await sharp(logoResized).metadata();
-
-        // Sfondo: logo sfocato e scurito che riempie il canvas
-        const bgBuffer = await sharp(logoBuffer)
-            .resize(CANVAS_W, CANVAS_H, { fit: 'cover' })
-            .blur(30)
-            .modulate({ brightness: 0.4 })
-            .png()
-            .toBuffer();
+        // Sfondo: logo sfocato, scurito e scalato a coprire il canvas
+        const bg = logo.clone()
+            .cover({ w: CANVAS_W, h: CANVAS_H })
+            .blur(20)
+            .brightness(-0.5);
 
         // Composizione: sfondo + logo centrato
-        const left = Math.round((CANVAS_W - logoW) / 2);
-        const top  = Math.round((CANVAS_H - logoH) / 2);
+        const left = Math.round((CANVAS_W - logoResized.bitmap.width)  / 2);
+        const top  = Math.round((CANVAS_H - logoResized.bitmap.height) / 2);
 
-        const output = await sharp(bgBuffer)
-            .composite([{ input: logoResized, left, top }])
-            .png()
-            .toBuffer();
+        bg.composite(logoResized, left, top);
 
+        const buffer = await bg.getBuffer('image/png');
         res.setHeader('Content-Type', 'image/png');
         res.setHeader('Cache-Control', 'public, max-age=86400');
-        res.send(output);
+        res.send(buffer);
     } catch (e) {
         logger.error('_', 'bg-image error:', e.message);
         res.status(500).send('Error generating background image');
