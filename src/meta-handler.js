@@ -1,6 +1,7 @@
 const config = require('./config');
 const logger = require('./logger');
 const { I18N } = require('../views/views-i18n');
+const { isLogoReachable } = require('./logo-checker');
 
 // ─── Costanti placehold.co (canali senza logo) ───────────────────────────────
 const PH_BG   = '1a1a2e'; // sfondo blu scuro
@@ -165,8 +166,18 @@ async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epg
 
         const channelDisplayName = channel.name || 'LIVE TV';
 
+        // Verifica se il link del logo funziona davvero (molti M3U hanno tvg-logo rotti).
+        // Se non raggiungibile, lo trattiamo come canale senza logo e usiamo subito
+        // il nostro placeholder col nome (niente affidamento sul fallback di weserv).
+        const rawLogoUrl = channel.logo || channel.poster || channel.background;
+        const logoOk     = rawLogoUrl ? await isLogoReachable(rawLogoUrl) : false;
+
+        const effectivePoster     = logoOk ? (channel.poster || channel.logo) : null;
+        const effectiveBackground = logoOk ? (channel.background || channel.logo) : null;
+        const effectiveLogo       = logoOk ? channel.logo : null;
+
         // Placeholder interno /ph-image — pre-calcolati, usati solo se nessun logo disponibile
-        const hasLogo      = !!(channel.logo || channel.poster);
+        const hasLogo      = !!effectiveLogo || !!effectivePoster || !!effectiveBackground;
         const phPoster     = hasLogo ? null : buildPlaceholderUrl(channelDisplayName, 400, 600, baseUrl);
         const phLandscape  = hasLogo ? null : buildPlaceholderUrl(channelDisplayName, 600, 400, baseUrl);
         const phBackground = hasLogo ? null : buildPlaceholderUrl(channelDisplayName, 1280, 720, baseUrl);
@@ -177,12 +188,12 @@ async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epg
             name: channel.streamInfo?.tvg?.chno
                 ? `${channel.streamInfo.tvg.chno}. ${channel.name}`
                 : channel.name,
-            // poster  → 2:3, weserv contain+blur
-            poster:      buildPosterUrl(channel.poster || channel.logo, 'poster', null, channelDisplayName)           || phPoster,
+            // poster  → 2:3, weserv contain, sfondo trasparente
+            poster:      buildPosterUrl(effectivePoster, 'poster', baseUrl, channelDisplayName)           || phPoster,
             // background → endpoint /bg-image: logo 40% centrato su canvas 1280x720 con sfondo sfocato
-            background:  buildPosterUrl(channel.background || channel.logo, 'background', baseUrl, channelDisplayName) || phBackground,
-            // logo → 3:2, weserv contain+blur
-            logo:        buildPosterUrl(channel.logo, 'landscape', null, channelDisplayName)                          || phLandscape,
+            background:  buildPosterUrl(effectiveBackground, 'background', baseUrl, channelDisplayName) || phBackground,
+            // logo → 3:2, weserv contain, sfondo trasparente (come il poster 2:3)
+            logo:        buildPosterUrl(effectiveLogo, 'landscape', baseUrl, channelDisplayName)                          || phLandscape,
             description: '',
             releaseInfo: 'LIVE',
             genre:       channel.genre,
@@ -193,13 +204,14 @@ async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epg
             behaviorHints: { isLive: true, defaultVideoId: channel.id }
         };
 
-        // Fallback EPG: se manca qualcosa, prova con l'icona EPG
+        // Fallback EPG: se manca qualcosa, prova con l'icona EPG (solo se raggiungibile)
         if ((!meta.poster || !meta.background || !meta.logo) && channel.streamInfo?.tvg?.id) {
-            const epgIcon = epgManager.getChannelIcon(normalizeId(channel.streamInfo.tvg.id));
-            if (epgIcon) {
-                meta.poster     = meta.poster     || buildPosterUrl(epgIcon, 'poster', null, channelDisplayName);
+            const epgIcon   = epgManager.getChannelIcon(normalizeId(channel.streamInfo.tvg.id));
+            const epgIconOk = epgIcon ? await isLogoReachable(epgIcon) : false;
+            if (epgIcon && epgIconOk) {
+                meta.poster     = meta.poster     || buildPosterUrl(epgIcon, 'poster', baseUrl, channelDisplayName);
                 meta.background = meta.background || buildPosterUrl(epgIcon, 'background', baseUrl, channelDisplayName);
-                meta.logo       = meta.logo       || buildPosterUrl(epgIcon, 'landscape', null, channelDisplayName);
+                meta.logo       = meta.logo       || buildPosterUrl(epgIcon, 'landscape', baseUrl, channelDisplayName);
             }
         }
 

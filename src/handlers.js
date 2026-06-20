@@ -4,6 +4,7 @@ const logger = require('./logger');
 const StreamProxyManager = require('./stream-proxy-manager')(config);
 const ResolverStreamManager = require('./resolver-stream-manager')(config);
 const { I18N } = require('../views/views-i18n');
+const { isLogoReachable } = require('./logo-checker');
 
 // simple helper to map user-configured language names to i18n codes
 function getLangCode(userConfig) {
@@ -87,12 +88,20 @@ function buildPlaceholderUrl(channelName, size, baseUrl = null) {
  * che weserv usa automaticamente se l'URL originale è rotto/irraggiungibile
  * (link morti sono molto comuni nelle playlist IPTV — senza questo, weserv
  * mostra un riquadro vuoto invece del placeholder col nome canale).
+ *
+ * transparent=true → nessun riempimento dello sfondo (cbg), il canvas resta
+ * vuoto/trasparente attorno al logo. Usato per poster (2:3) e logo (3:2): in
+ * entrambi i casi Stremio può mostrare l'immagine sovrapposta ad altri sfondi
+ * (card, pagina dettaglio), quindi un riempimento pieno risulterebbe visibile
+ * come un riquadro colorato. Il "background" (1280x720) mantiene invece cbg,
+ * essendo pensato per riempire per intero lo sfondo della pagina dettaglio.
  */
-function buildPosterUrl(imageUrl, w, h, channelName, baseUrl = null) {
+function buildPosterUrl(imageUrl, w, h, channelName, baseUrl = null, transparent = false) {
     const fallback = buildPlaceholderUrl(channelName, `${w}x${h}`, baseUrl);
     if (!imageUrl) return fallback;
     const defaultParam = encodeURIComponent(fallback);
-    return `https://images.weserv.nl/?url=${encodeURIComponent(imageUrl)}&w=${w}&h=${h}&fit=contain&cbg=1a1a2e&default=${defaultParam}`;
+    const bgParam = transparent ? '' : '&cbg=1a1a2e';
+    return `https://images.weserv.nl/?url=${encodeURIComponent(imageUrl)}&w=${w}&h=${h}&fit=contain${bgParam}&default=${defaultParam}`;
 }
 
 async function catalogHandler({ type, id, extra, config: userConfig, cacheManager: cm, epgManager: em, pythonResolver, pythonRunner, baseUrl }) {
@@ -155,18 +164,26 @@ async function catalogHandler({ type, id, extra, config: userConfig, cacheManage
 
         const paginatedChannels = filteredChannels.slice(skip, skip + ITEMS_PER_PAGE);
 
-        const metas = paginatedChannels.map(channel => {
+        const metas = await Promise.all(paginatedChannels.map(async channel => {
             const language = getLanguageFromConfig(userConfig);
             const languageAbbr = language.substring(0, 3).toUpperCase();
-            const rawIcon = channel.poster || channel.logo;
+            const rawIconCandidate = channel.poster || channel.logo || channel.background;
+            // Verifica che il link del logo funzioni davvero: se è rotto/irraggiungibile
+            // lo trattiamo come canale senza logo (placeholder col nome canale), invece
+            // di affidarci solo al fallback &default di weserv (non sempre affidabile).
+            const rawIconOk = rawIconCandidate ? await isLogoReachable(rawIconCandidate) : false;
+            const rawIcon   = rawIconOk ? rawIconCandidate : null;
+            const logoUrl   = rawIconOk ? channel.logo : null;
 
             const meta = {
                 id: channel.id,
                 type: 'tv',
                 name: `${channel.name} [${languageAbbr}]`,
-                poster: buildPosterUrl(rawIcon, 400, 600, channel.name, baseUrl),
+                // poster → 2:3, sfondo trasparente (transparent=true), come il logo 3:2
+                poster: buildPosterUrl(rawIcon, 400, 600, channel.name, baseUrl, true),
                 background: rawIcon ? buildPosterUrl(channel.background || channel.logo, 1280, 720, channel.name, baseUrl) : null,
-                logo: buildPosterUrl(channel.logo, 600, 400, channel.name, baseUrl),
+                // logo → 3:2, sfondo trasparente (transparent=true): deve restare vuoto come il poster 2:3
+                logo: buildPosterUrl(logoUrl, 600, 400, channel.name, baseUrl, true),
                 description: channel.description || `Channel: ${channel.name} - ID: ${channel.streamInfo?.tvg?.id}`,
                 genre: channel.genre,
                 posterShape: channel.posterShape || 'poster',
@@ -183,16 +200,17 @@ async function catalogHandler({ type, id, extra, config: userConfig, cacheManage
             }
 
             if (!rawIcon && channel.streamInfo?.tvg?.id) {
-                const epgIcon = epgManager.getChannelIcon(channel.streamInfo.tvg.id);
-                if (epgIcon) {
-                    meta.poster = buildPosterUrl(epgIcon, 400, 600, channel.name, baseUrl);
+                const epgIcon   = epgManager.getChannelIcon(channel.streamInfo.tvg.id);
+                const epgIconOk = epgIcon ? await isLogoReachable(epgIcon) : false;
+                if (epgIcon && epgIconOk) {
+                    meta.poster = buildPosterUrl(epgIcon, 400, 600, channel.name, baseUrl, true);
                     meta.background = buildPosterUrl(epgIcon, 1280, 720, channel.name, baseUrl);
-                    meta.logo = buildPosterUrl(epgIcon, 600, 400, channel.name, baseUrl);
+                    meta.logo = buildPosterUrl(epgIcon, 600, 400, channel.name, baseUrl, true);
                 }
             }
 
             return enrichWithEPG(meta, channel.streamInfo?.tvg?.id, userConfig, epgManager);
-        });
+        }));
 
         const SETTINGS_GENRE = '⚙️';
         const settingsLogo = 'https://raw.githubusercontent.com/mccoy88f/OMG-TV-Stremio-Addon/refs/heads/main/tv.png';
