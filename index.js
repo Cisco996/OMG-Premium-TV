@@ -490,7 +490,7 @@ app.get('/:resource/:type/:id/:extra?.json', async (req, res, next) => {
 // GET /bg-image/:encodedLogoUrl
 app.get('/bg-image/:encodedUrl', async (req, res) => {
     try {
-        const Jimp = require('jimp');
+        const { Jimp } = require('jimp');
         const logoUrl = decodeURIComponent(req.params.encodedUrl);
 
         const CANVAS_W   = 1280;
