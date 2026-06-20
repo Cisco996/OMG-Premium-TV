@@ -253,7 +253,7 @@ app.get('/manifest.json', async (req, res) => {
             if (epgToUse) await epgManager.initializeEPG(epgToUse);
         }
 
-        builder.defineCatalogHandler(async (args) => catalogHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner }));
+        builder.defineCatalogHandler(async (args) => catalogHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` }));
         builder.defineStreamHandler(async (args) => streamHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner }));
         builder.defineMetaHandler(async (args) => metaHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` }));
         res.setHeader('Content-Type', 'application/json');
@@ -346,7 +346,7 @@ app.get('/:config/manifest.json', async (req, res) => {
             if (epgToUse) await epgManager.initializeEPG(epgToUse);
         }
 
-        builder.defineCatalogHandler(async (args) => catalogHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner }));
+        builder.defineCatalogHandler(async (args) => catalogHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` }));
         builder.defineStreamHandler(async (args) => streamHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner }));
         builder.defineMetaHandler(async (args) => metaHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` }));
 
@@ -379,7 +379,8 @@ app.get('/:config/catalog/:type/:id/:extra?.json', async (req, res) => {
             cacheManager,
             epgManager,
             pythonResolver,
-            pythonRunner
+            pythonRunner,
+            baseUrl: `${req.protocol}://${req.get('host')}`
         });
 
         res.setHeader('Content-Type', 'application/json');
@@ -466,7 +467,7 @@ app.get('/:resource/:type/:id/:extra?.json', async (req, res, next) => {
                 result = await streamHandler({ type, id, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner });
                 break;
             case 'catalog':
-                result = await catalogHandler({ type, id, extra, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner });
+                result = await catalogHandler({ type, id, extra, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` });
                 break;
             case 'meta':
                 result = await metaHandler({ type, id, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` });
@@ -492,12 +493,12 @@ const BG_IMAGE_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 
 // Background image: scarica il logo, lo rimpicciolisce al 40% e lo centra
 // su canvas 1280x720 con sfondo sfocato — evita l'effetto zoom di Stremio.
-// Usa Jimp (puro JS, zero dipendenze native) — funziona su HF senza modifiche al Dockerfile.
+// Usa Sharp (nativo libvips) se disponibile — 10-20× più veloce di Jimp.
+// Fallback automatico a Jimp se Sharp non è installato (es. HF senza rebuild).
 // GET /bg-image/:encodedLogoUrl
 app.get('/bg-image/:encodedUrl', async (req, res) => {
     const channelName = req.query.name || 'LIVE TV';
     try {
-        const { Jimp } = require('jimp');
         const logoUrl = decodeURIComponent(req.params.encodedUrl);
 
         // ── Cache hit ──────────────────────────────────────────────────────
@@ -515,38 +516,70 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
         const LOGO_MAX_W = Math.round(CANVAS_W * 0.40); // 512px
         const LOGO_MAX_H = Math.round(CANVAS_H * 0.40); // 288px
 
-        // Scarichiamo noi il logo con uno User-Agent "civile": alcuni host
-        // (es. upload.wikimedia.org) rifiutano richieste senza UA con HTTP 400/403,
-        // e Jimp.read(url) non permette di impostare header custom.
+        // Scarica il logo con User-Agent civile (alcuni host rifiutano senza UA)
         const logoResponse = await fetch(logoUrl, {
             headers: { 'User-Agent': config.defaultUserAgent }
         });
         if (!logoResponse.ok) {
             throw new Error(`HTTP Status ${logoResponse.status} for url ${logoUrl}`);
         }
-        const logoArrayBuffer = await logoResponse.arrayBuffer();
-        const logo = await Jimp.read(Buffer.from(logoArrayBuffer));
+        const logoBuffer = Buffer.from(await logoResponse.arrayBuffer());
 
-        // Logo ridimensionato mantenendo le proporzioni
-        const logoResized = logo.clone().scaleToFit({ w: LOGO_MAX_W, h: LOGO_MAX_H });
+        let buffer;
 
-        // Sfondo: logo sfocato, scurito e scalato a coprire il canvas
-        const bg = logo.clone()
-            .cover({ w: CANVAS_W, h: CANVAS_H })
-            .blur(20)
-            .brightness(-0.5);
+        // ── Prova Sharp (veloce, nativo) ───────────────────────────────────
+        let sharpOk = false;
+        try {
+            const sharp = require('sharp');
 
-        // Composizione: sfondo + logo centrato
-        const left = Math.round((CANVAS_W - logoResized.bitmap.width)  / 2);
-        const top  = Math.round((CANVAS_H - logoResized.bitmap.height) / 2);
+            // Metadata per calcolare il resize mantenendo le proporzioni
+            const meta = await sharp(logoBuffer).metadata();
+            const ratio = Math.min(LOGO_MAX_W / meta.width, LOGO_MAX_H / meta.height);
+            const logoW = Math.round(meta.width  * ratio);
+            const logoH = Math.round(meta.height * ratio);
+            const left  = Math.round((CANVAS_W - logoW) / 2);
+            const top   = Math.round((CANVAS_H - logoH) / 2);
 
-        bg.composite(logoResized, left, top);
+            // Sfondo: logo scalato a coprire il canvas e scurito
+            const bgBuffer = await sharp(logoBuffer)
+                .resize(CANVAS_W, CANVAS_H, { fit: 'cover' })
+                .modulate({ brightness: 0.45 })
+                .toBuffer();
 
-        const buffer = await bg.getBuffer('image/png');
+            // Logo ridimensionato mantenendo le proporzioni
+            const logoResized = await sharp(logoBuffer)
+                .resize(logoW, logoH, { fit: 'fill' })
+                .toBuffer();
+
+            // Composizione: sfondo + logo centrato
+            buffer = await sharp(bgBuffer)
+                .composite([{ input: logoResized, left, top }])
+                .png({ compressionLevel: 6 })
+                .toBuffer();
+
+            sharpOk = true;
+        } catch (sharpErr) {
+            // Sharp non disponibile — fallback a Jimp
+            logger.log('_', 'Sharp not available, falling back to Jimp:', sharpErr.message);
+        }
+
+        // ── Fallback Jimp (puro JS, zero dipendenze native) ───────────────
+        if (!sharpOk) {
+            const { Jimp } = require('jimp');
+            const logo = await Jimp.read(logoBuffer);
+            const logoResized = logo.clone().scaleToFit({ w: LOGO_MAX_W, h: LOGO_MAX_H });
+            const bg = logo.clone()
+                .cover({ w: CANVAS_W, h: CANVAS_H })
+                .brightness(-0.5);
+            const left = Math.round((CANVAS_W - logoResized.bitmap.width)  / 2);
+            const top  = Math.round((CANVAS_H - logoResized.bitmap.height) / 2);
+            bg.composite(logoResized, left, top);
+            buffer = await bg.getBuffer('image/png');
+        }
+        // ──────────────────────────────────────────────────────────────────
 
         // ── Salva in cache (evita ri-elaborazioni per 24h) ────────────────
         bgImageCache.set(logoUrl, { buffer, ts: Date.now() });
-        // Pulizia lazy: rimuovi entry scadute ogni ~100 inserimenti
         if (bgImageCache.size % 100 === 0) {
             const now = Date.now();
             for (const [k, v] of bgImageCache) {
@@ -560,9 +593,6 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
         res.setHeader('X-BgImage-Cache', 'MISS');
         res.send(buffer);
     } catch (e) {
-        // Link del logo rotto/irraggiungibile (o bloccato dall'host sorgente):
-        // redirige al placeholder col nome canale invece di restituire un errore
-        // (che Stremio mostra come riquadro vuoto).
         logger.error('_', 'bg-image error, falling back to placeholder:', e.message);
         const label = channelName.substring(0, 24).trim();
         res.redirect(302, `https://placehold.co/1280x720/1a1a2e/cc5500.png?font=montserrat&text=${encodeURIComponent(label)}`);
