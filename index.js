@@ -514,8 +514,16 @@ const CANVAS_H   = 720;
 const LOGO_MAX_W = Math.round(CANVAS_W * 0.40); // 512px
 const LOGO_MAX_H = Math.round(CANVAS_H * 0.40); // 288px
 
+// Jimp + plugin WebP — registrati una sola volta al primo uso del modulo
+const { Jimp } = require('jimp');
+try {
+    const { webp } = require('@jimp/js-webp');
+    Jimp.addType(webp);
+} catch (e) {
+    logger.warn('_', 'WebP plugin non disponibile, i logo .webp verranno skippati:', e.message);
+}
+
 async function buildBgBuffer(logoUrl) {
-    const { Jimp } = require('jimp');
     const logoResponse = await fetch(logoUrl, {
         headers: { 'User-Agent': config.defaultUserAgent }
     });
