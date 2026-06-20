@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "cookie-parser": "^1.4.6",
+    "cors": "^2.8.5",
     "@iptv/playlist": "^1.1.0",
     "axios": "^1.3.4",
     "events": "^3.3.0",
