@@ -1,0 +1,37 @@
+FROM node:20-slim
+
+# Define build argument for branch
+ARG BRANCH=main
+
+# Install git, Python and pip
+RUN apt-get update && \
+    apt-get install -y git python3 python3-pip \
+    libvips-dev build-essential && \
+    pip3 install requests --break-system-packages && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Clone the repository and checkout specified branch
+RUN git clone https://github.com/mccoy88f/OMG-Premium-TV.git . && \
+    git checkout ${BRANCH}
+
+# Install dependencies
+RUN npm install
+
+# Create directories for Python scripts and generated playlists
+RUN mkdir -p /app/temp && \
+    chmod 777 /app/temp
+RUN chmod 777 /app
+
+
+
+# Expose the port (Hugging Face uses 7860)
+EXPOSE 7860
+
+# Set essential environment variables for Hugging Face
+ENV PORT=7860
+ENV HOST=0.0.0.0
+
+# Start the application
+CMD ["node", "index.js"]
