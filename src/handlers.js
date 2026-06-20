@@ -64,6 +64,17 @@ function cleanNameForImage(name) {
     return cleaned || 'No Name';
 }
 
+// ─── Placeholder placehold.co (canali senza logo) — stessa identità visiva di meta-handler.js ──
+const PH_BG   = '1a1a2e'; // sfondo blu scuro
+const PH_FG   = 'cc5500'; // testo arancione scuro
+const PH_FONT = 'montserrat';
+
+function buildPlaceholderUrl(channelName, size) {
+    const label = cleanNameForImage(channelName || 'LIVE TV').substring(0, 24).trim();
+    const text  = encodeURIComponent(label);
+    return `https://placehold.co/${size}/${PH_BG}/${PH_FG}.png?font=${PH_FONT}&text=${text}`;
+}
+
 async function catalogHandler({ type, id, extra, config: userConfig, cacheManager: cm, epgManager: em, pythonResolver, pythonRunner }) {
     const cacheManager = cm || global.CacheManager;
     const epgManager = em || require('./epg-manager');
@@ -125,19 +136,22 @@ async function catalogHandler({ type, id, extra, config: userConfig, cacheManage
         const paginatedChannels = filteredChannels.slice(skip, skip + ITEMS_PER_PAGE);
 
         const metas = paginatedChannels.map(channel => {
-            const displayName = cleanNameForImage(channel.name);
-            const encodedName = encodeURIComponent(displayName).replace(/%20/g, '+');
-            const fallbackLogo = `https://dummyimage.com/500x500/590b8a/ffffff.jpg&text=${encodedName}`;
             const language = getLanguageFromConfig(userConfig);
             const languageAbbr = language.substring(0, 3).toUpperCase();
+
+            const hasLogo = !!(channel.poster || channel.logo);
+            const phPoster     = hasLogo ? null : buildPlaceholderUrl(channel.name, '400x600');
+            const phLandscape  = hasLogo ? null : buildPlaceholderUrl(channel.name, '600x400');
 
             const meta = {
                 id: channel.id,
                 type: 'tv',
                 name: `${channel.name} [${languageAbbr}]`,
-                poster: `https://images.weserv.nl/?url=${encodeURIComponent(channel.poster || fallbackLogo)}&w=400&h=600&fit=contain&cbg=1a1a2e`,
-                background: channel.background || fallbackLogo,
-                logo: channel.logo || fallbackLogo,
+                poster: channel.poster || channel.logo
+                    ? `https://images.weserv.nl/?url=${encodeURIComponent(channel.poster || channel.logo)}&w=400&h=600&fit=contain&cbg=1a1a2e`
+                    : phPoster,
+                background: channel.background || channel.logo || null,
+                logo: channel.logo || phLandscape,
                 description: channel.description || `Channel: ${channel.name} - ID: ${channel.streamInfo?.tvg?.id}`,
                 genre: channel.genre,
                 posterShape: channel.posterShape || 'poster',
@@ -161,6 +175,10 @@ async function catalogHandler({ type, id, extra, config: userConfig, cacheManage
                     meta.logo = meta.logo || epgIcon;
                 }
             }
+
+            // Ultimo fallback per il poster: se anche dopo l'EPG manca, usa il placeholder col nome canale
+            meta.poster = meta.poster || phPoster;
+            meta.logo   = meta.logo   || phLandscape;
 
             return enrichWithEPG(meta, channel.streamInfo?.tvg?.id, userConfig, epgManager);
         });
@@ -432,17 +450,17 @@ async function streamHandler({ id, config: userConfig, cacheManager: cm, epgMana
         }
 
         // Aggiungi i metadati a tutti gli stream
-        const displayName = cleanNameForImage(channel.name);
-        const encodedName = encodeURIComponent(displayName).replace(/%20/g, '+');
-        const fallbackLogo = `https://dummyimage.com/500x500/590b8a/ffffff.jpg&text=${encodedName}`;
+        const hasLogo = !!(channel.poster || channel.logo);
+        const phPoster    = hasLogo ? null : buildPlaceholderUrl(channel.name, '400x600');
+        const phLandscape = hasLogo ? null : buildPlaceholderUrl(channel.name, '600x400');
 
         const meta = {
             id: channel.id,
             type: 'tv',
             name: channel.name,
-            poster: channel.poster || fallbackLogo,
-            background: channel.background || fallbackLogo,
-            logo: channel.logo || fallbackLogo,
+            poster: channel.poster || channel.logo || phPoster,
+            background: channel.background || channel.logo || null,
+            logo: channel.logo || phLandscape,
             description: channel.description || `Channel ID: ${channel.streamInfo?.tvg?.id}`,
             genre: channel.genre,
             posterShape: channel.posterShape || 'poster',
@@ -462,6 +480,9 @@ async function streamHandler({ id, config: userConfig, cacheManager: cm, epgMana
                 meta.logo = meta.logo || epgIcon;
             }
         }
+
+        meta.poster = meta.poster || phPoster;
+        meta.logo   = meta.logo   || phLandscape;
 
         streams.forEach(stream => {
             stream.meta = meta;
