@@ -66,22 +66,6 @@ async function getCacheManager(sessionId, userConfig) {
     const key = (sessionId && String(sessionId).trim()) ? String(sessionId).trim() : getSessionKeyFromConfig(userConfig);
     if (!cacheRegistry.has(key)) {
         const cm = await CacheManagerFactory(userConfig || {}, key === '_default' ? null : key);
-        // Warmup bg-image cache ogni volta che i canali vengono (ri)caricati
-        cm.on('cacheUpdated', (cache) => {
-            const channels = cache?.stremioData?.channels;
-            if (channels?.length) {
-                warmupBgCache(channels).catch(e =>
-                    logger.error('_', 'bg-image warmup error:', e.message)
-                );
-            }
-        });
-        // Se i canali sono già in cache al momento della registrazione, warmup immediato
-        const existing = cm.cache?.stremioData?.channels;
-        if (existing?.length) {
-            warmupBgCache(existing).catch(e =>
-                logger.error('_', 'bg-image warmup error:', e.message)
-            );
-        }
         cacheRegistry.set(key, cm);
     }
     const cm = cacheRegistry.get(key);
@@ -501,12 +485,21 @@ app.get('/:resource/:type/:id/:extra?.json', async (req, res, next) => {
     }
 });
 
+// PNG nero 1280x720 — restituito istantaneamente mentre Jimp elabora in background.
+// Generato una sola volta con Jimp all'avvio (lazy, al primo utilizzo).
+let BLACK_BG = null;
+async function getBlackBg() {
+    if (BLACK_BG) return BLACK_BG;
+    const { Jimp: J } = require('jimp');
+    const img = new J({ width: 1280, height: 720, color: 0x000000ff });
+    BLACK_BG = await img.getBuffer('image/png');
+    return BLACK_BG;
+}
+
 // ─── Cache permanente in-memory per /bg-image ────────────────────────────────
 // Chiave: logoUrl → Buffer PNG già elaborato da Jimp.
 // La cache non scade: i logo sono fissi per tutta la vita del processo.
-// Al primo caricamento dei canali (evento cacheUpdated) tutti i logo vengono
-// pre-elaborati in background (warmup) → le richieste di Stremio trovano
-// sempre la cache già pronta.
+// On-demand: elaborati al primo accesso, istantanei da quel momento in poi.
 const bgImageCache = new Map();
 
 const CANVAS_W   = 1280;
@@ -551,64 +544,34 @@ async function buildBgBuffer(logoUrl) {
     return bg.getBuffer('image/png');
 }
 
-// Warmup: pre-elabora tutti i logo dei canali in background, con concorrenza
-// limitata a 5 fetch/Jimp paralleli per non saturare la rete all'avvio.
-async function warmupBgCache(channels) {
-    const logoUrls = [...new Set(
-        channels.map(ch => ch.logo || ch.poster || ch.background).filter(Boolean)
-    )];
-    const todo = logoUrls.filter(url => !bgImageCache.has(url));
-    if (!todo.length) return;
-    logger.log('_', `bg-image warmup: ${todo.length} logo da elaborare…`);
 
-    const CONCURRENCY = 5;
-    let i = 0;
-    async function worker() {
-        while (i < todo.length) {
-            const url = todo[i++];
-            try {
-                const buffer = await buildBgBuffer(url);
-                bgImageCache.set(url, buffer);
-            } catch (e) {
-                // Logo non raggiungibile: verrà gestito dal fallback al momento della richiesta
-                logger.warn('_', `bg-image warmup skip: ${e.message}`);
-            }
-        }
-    }
-    await Promise.all(Array.from({ length: CONCURRENCY }, worker));
-    logger.log('_', `bg-image warmup completato: ${bgImageCache.size} logo in cache.`);
-}
 
 // Background image: scarica il logo, lo rimpicciolisce al 40% e lo centra
 // su canvas 1280x720 con sfondo sfocato — evita l'effetto zoom di Stremio.
 // Usa Jimp (puro JS, zero dipendenze native) — funziona su HF senza modifiche al Dockerfile.
 // Il risultato è cachato permanentemente in memoria; il warmup all'avvio lo pre-popola.
 // GET /bg-image/:encodedLogoUrl
+// Cache hit  → PNG immediato.
+// Cache miss → 204 No Content (Stremio mostra nero) + elaborazione Jimp in background.
+//              Al secondo accesso la cache è pronta e la risposta è istantanea.
 app.get('/bg-image/:encodedUrl', async (req, res) => {
     const channelName = req.query.name || 'LIVE TV';
     const logoUrl = decodeURIComponent(req.params.encodedUrl);
 
-    // ── Cache hit ──────────────────────────────────────────────────────────
     if (bgImageCache.has(logoUrl)) {
         res.setHeader('Content-Type', 'image/png');
         res.setHeader('Cache-Control', 'public, max-age=86400');
-        res.setHeader('X-BG-Cache', 'HIT');
         return res.send(bgImageCache.get(logoUrl));
     }
 
-    // ── Cache miss: elabora con Jimp e salva permanentemente ──────────────
-    try {
-        const buffer = await buildBgBuffer(logoUrl);
-        bgImageCache.set(logoUrl, buffer);
-        res.setHeader('Content-Type', 'image/png');
-        res.setHeader('Cache-Control', 'public, max-age=86400');
-        res.setHeader('X-BG-Cache', 'MISS');
-        res.send(buffer);
-    } catch (e) {
-        logger.error('_', 'bg-image error, falling back to placeholder:', e.message);
-        const label = channelName.substring(0, 30).trim();
-        res.redirect(302, `https://placehold.co/1280x720/1a1a2e/cc5500.png?font=montserrat&text=${encodeURIComponent(label)}&fontSize=120`);
-    }
+    // Non ancora in cache: risponde subito con PNG nero 1280x720
+    // ed elabora in background; al secondo accesso la cache è pronta.
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(await getBlackBg());
+    buildBgBuffer(logoUrl)
+        .then(buffer => { bgImageCache.set(logoUrl, buffer); })
+        .catch(e => logger.warn('_', `bg-image build error: ${e.message}`));
 });
 
 //route download template
