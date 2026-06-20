@@ -76,6 +76,34 @@ const PSEUDO_META = {
 };
 const SETTINGS_LOGO = 'https://raw.githubusercontent.com/mccoy88f/OMG-TV-Stremio-Addon/refs/heads/main/tv.png';
 
+/**
+ * Build a weserv URL that keeps the logo fully visible regardless of carousel shape.
+ *
+ * - poster  (2:3, 400×600): tall card → contain with dark background
+ * - landscape (3:2, 600×400): wide card → contain with dark background
+ * - square (1:1, 400×400): square card → contain with dark background
+ *
+ * `cbg` sets the canvas background color (hex without #).
+ */
+function buildPosterUrl(imageUrl, shape = 'poster') {
+    if (!imageUrl) return null;
+    const base = 'https://images.weserv.nl/?url=' + encodeURIComponent(imageUrl);
+    if (shape === 'landscape') {
+        // 3:2 wide — logo centrato orizzontalmente
+        return `${base}&w=600&h=400&fit=contain&cbg=1a1a2e`;
+    }
+    if (shape === 'square') {
+        return `${base}&w=400&h=400&fit=contain&cbg=1a1a2e`;
+    }
+    if (shape === 'background') {
+        // Scheda dettaglio Stremio: risoluzione alta, logo contenuto con
+        // molto spazio attorno per evitare l'effetto "zoommatissimo".
+        return `${base}&w=1280&h=720&fit=contain&cbg=1a1a2e`;
+    }
+    // default: 'poster' → 2:3 tall
+    return `${base}&w=400&h=600&fit=contain&cbg=1a1a2e`;
+}
+
 async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epgManager: em }) {
     const cacheManager = cm || global.CacheManager;
     const epgManager = em || require('./epg-manager');
@@ -90,9 +118,9 @@ async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epg
                     id: fullId,
                     type: 'tv',
                     name: t(info.name, userConfig),
-                    poster: SETTINGS_LOGO,
-                    background: SETTINGS_LOGO,
-                    logo: SETTINGS_LOGO,
+                    poster: buildPosterUrl(SETTINGS_LOGO, 'poster'),
+                    background: buildPosterUrl(SETTINGS_LOGO, 'background'),
+                    logo: buildPosterUrl(SETTINGS_LOGO, 'landscape'),
                     description: t(info.description, userConfig),
                     releaseInfo: 'LIVE',
                     posterShape: 'poster',
@@ -127,11 +155,14 @@ async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epg
             name: channel.streamInfo?.tvg?.chno
                 ? `${channel.streamInfo.tvg.chno}. ${channel.name}`
                 : channel.name,
-            poster: (channel.poster || channel.logo)
-                ? `https://images.weserv.nl/?url=${encodeURIComponent(channel.poster || channel.logo)}&w=400&h=600&fit=contain&cbg=1a1a2e`
-                : null,
-            background: channel.background || channel.logo,
-            logo: channel.logo,
+            // poster  → 2:3 (carosello verticale): logo contenuto su sfondo scuro
+            poster: buildPosterUrl(channel.poster || channel.logo, 'poster'),
+            // background → scheda dettaglio: 16:9 con logo contenuto (evita lo zoom eccessivo)
+            background: buildPosterUrl(channel.background || channel.logo, 'background'),
+            // logo → 3:2 (carosello orizzontale / landscape): logo contenuto su sfondo scuro
+            // Stremio mostra `logo` nei caroselli landscape; usare weserv garantisce
+            // che il logo sia sempre leggibile e non venga ritagliato.
+            logo: buildPosterUrl(channel.logo, 'landscape'),
             description: '',
             releaseInfo: 'LIVE',
             genre: channel.genre,
@@ -148,9 +179,9 @@ async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epg
         if ((!meta.poster || !meta.background || !meta.logo) && channel.streamInfo?.tvg?.id) {
             const epgIcon = epgManager.getChannelIcon(normalizeId(channel.streamInfo.tvg.id));
             if (epgIcon) {
-                meta.poster = meta.poster || (epgIcon ? `https://images.weserv.nl/?url=${encodeURIComponent(epgIcon)}&w=400&h=600&fit=contain&cbg=1a1a2e` : null);
-                meta.background = meta.background || epgIcon;
-                meta.logo = meta.logo || epgIcon;
+                meta.poster = meta.poster || buildPosterUrl(epgIcon, 'poster');
+                meta.background = meta.background || buildPosterUrl(epgIcon, 'background');
+                meta.logo = meta.logo || buildPosterUrl(epgIcon, 'landscape');
             } else {
             }
         }
