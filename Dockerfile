@@ -6,7 +6,8 @@ WORKDIR /app
 
 # Installa git, Python e pip (se necessario)
 RUN apt-get update && \
-    apt-get install -y git python3 python3-pip && \
+    apt-get install -y git python3 python3-pip \
+    libvips-dev build-essential && \
     pip3 install requests --break-system-packages && \
     rm -rf /var/lib/apt/lists/*
 
