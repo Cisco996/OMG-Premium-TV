@@ -255,7 +255,7 @@ app.get('/manifest.json', async (req, res) => {
 
         builder.defineCatalogHandler(async (args) => catalogHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner }));
         builder.defineStreamHandler(async (args) => streamHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner }));
-        builder.defineMetaHandler(async (args) => metaHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner }));
+        builder.defineMetaHandler(async (args) => metaHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` }));
         res.setHeader('Content-Type', 'application/json');
         res.send(builder.getInterface().manifest);
     } catch (error) {
@@ -348,7 +348,7 @@ app.get('/:config/manifest.json', async (req, res) => {
 
         builder.defineCatalogHandler(async (args) => catalogHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner }));
         builder.defineStreamHandler(async (args) => streamHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner }));
-        builder.defineMetaHandler(async (args) => metaHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner }));
+        builder.defineMetaHandler(async (args) => metaHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` }));
 
         res.setHeader('Content-Type', 'application/json');
         res.send(builder.getInterface().manifest);
@@ -435,7 +435,8 @@ app.get('/:config/meta/:type/:id.json', async (req, res) => {
             cacheManager,
             epgManager,
             pythonResolver,
-            pythonRunner
+            pythonRunner,
+            baseUrl: `${req.protocol}://${req.get('host')}`
         });
 
         res.setHeader('Content-Type', 'application/json');
@@ -468,7 +469,7 @@ app.get('/:resource/:type/:id/:extra?.json', async (req, res, next) => {
                 result = await catalogHandler({ type, id, extra, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner });
                 break;
             case 'meta':
-                result = await metaHandler({ type, id, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner });
+                result = await metaHandler({ type, id, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` });
                 break;
             default:
                 next();
@@ -480,6 +481,67 @@ app.get('/:resource/:type/:id/:extra?.json', async (req, res, next) => {
     } catch (error) {
         logger.error(cacheManager?.sessionKey ?? '_', 'Error handling request:', error.message);
         res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Background image: scarica il logo, lo rimpicciolisce al 40% e lo centra
+// su canvas 1280x720 con sfondo sfocato — evita l'effetto zoom di Stremio.
+// GET /bg-image/:encodedLogoUrl
+app.get('/bg-image/:encodedUrl', async (req, res) => {
+    try {
+        const sharp  = require('sharp');
+        const https  = require('https');
+        const http   = require('http');
+        const logoUrl = decodeURIComponent(req.params.encodedUrl);
+
+        const fetchBuffer = (url) => new Promise((resolve, reject) => {
+            const client = url.startsWith('https') ? https : http;
+            client.get(url, (response) => {
+                const chunks = [];
+                response.on('data',  chunk => chunks.push(chunk));
+                response.on('end',   ()    => resolve(Buffer.concat(chunks)));
+                response.on('error', reject);
+            }).on('error', reject);
+        });
+
+        const logoBuffer = await fetchBuffer(logoUrl);
+
+        const CANVAS_W   = 1280;
+        const CANVAS_H   = 720;
+        const LOGO_MAX_W = Math.round(CANVAS_W * 0.40); // 512px
+        const LOGO_MAX_H = Math.round(CANVAS_H * 0.40); // 288px
+
+        // Logo ridimensionato mantenendo le proporzioni
+        const logoResized = await sharp(logoBuffer)
+            .resize(LOGO_MAX_W, LOGO_MAX_H, { fit: 'inside' })
+            .png()
+            .toBuffer();
+
+        const { width: logoW, height: logoH } = await sharp(logoResized).metadata();
+
+        // Sfondo: logo sfocato e scurito che riempie il canvas
+        const bgBuffer = await sharp(logoBuffer)
+            .resize(CANVAS_W, CANVAS_H, { fit: 'cover' })
+            .blur(30)
+            .modulate({ brightness: 0.4 })
+            .png()
+            .toBuffer();
+
+        // Composizione: sfondo + logo centrato
+        const left = Math.round((CANVAS_W - logoW) / 2);
+        const top  = Math.round((CANVAS_H - logoH) / 2);
+
+        const output = await sharp(bgBuffer)
+            .composite([{ input: logoResized, left, top }])
+            .png()
+            .toBuffer();
+
+        res.setHeader('Content-Type', 'image/png');
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        res.send(output);
+    } catch (e) {
+        logger.error('_', 'bg-image error:', e.message);
+        res.status(500).send('Error generating background image');
     }
 });
 
