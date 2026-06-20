@@ -15,19 +15,29 @@ const PH_FONT = 'montserrat';
  * Per 'background' usa l'endpoint interno /bg-image che rimpicciolisce
  * il logo al 40% su canvas 1280x720 con sfondo sfocato (come tvvoo).
  */
-function buildPosterUrl(imageUrl, shape = 'poster', baseUrl = null) {
+function buildPosterUrl(imageUrl, shape = 'poster', baseUrl = null, channelName = '') {
     if (!imageUrl) return null;
     const base = 'https://images.weserv.nl/?url=' + encodeURIComponent(imageUrl);
-    if (shape === 'landscape')  return `${base}&w=600&h=400&fit=contain&bg=blur`;
-    if (shape === 'square')     return `${base}&w=400&h=400&fit=contain&bg=blur`;
+    if (shape === 'landscape') {
+        const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '600x400'));
+        return `${base}&w=600&h=400&fit=contain&bg=blur&default=${fb}`;
+    }
+    if (shape === 'square') {
+        const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '400x400'));
+        return `${base}&w=400&h=400&fit=contain&bg=blur&default=${fb}`;
+    }
     if (shape === 'background') {
-        // Usa endpoint interno se disponibile (logo rimpicciolito centrato)
-        if (baseUrl) return `${baseUrl}/bg-image/${encodeURIComponent(imageUrl)}`;
+        // Usa endpoint interno se disponibile (logo rimpicciolito centrato);
+        // passiamo il nome canale così l'endpoint può generare un fallback
+        // col nome se il link del logo è rotto/irraggiungibile.
+        if (baseUrl) return `${baseUrl}/bg-image/${encodeURIComponent(imageUrl)}?name=${encodeURIComponent(channelName || '')}`;
         // Fallback weserv se baseUrl non disponibile
-        return `${base}&w=1280&h=720&fit=contain&bg=blur`;
+        const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '1280x720'));
+        return `${base}&w=1280&h=720&fit=contain&bg=blur&default=${fb}`;
     }
     // default: poster 2:3
-    return `${base}&w=400&h=600&fit=contain&bg=blur`;
+    const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '400x600'));
+    return `${base}&w=400&h=600&fit=contain&bg=blur&default=${fb}`;
 }
 
 /**
@@ -159,11 +169,11 @@ async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epg
                 ? `${channel.streamInfo.tvg.chno}. ${channel.name}`
                 : channel.name,
             // poster  → 2:3, weserv contain+blur
-            poster:      buildPosterUrl(channel.poster || channel.logo, 'poster')           || phPoster,
+            poster:      buildPosterUrl(channel.poster || channel.logo, 'poster', null, channelDisplayName)           || phPoster,
             // background → endpoint /bg-image: logo 40% centrato su canvas 1280x720 con sfondo sfocato
-            background:  buildPosterUrl(channel.background || channel.logo, 'background', baseUrl) || phBackground,
+            background:  buildPosterUrl(channel.background || channel.logo, 'background', baseUrl, channelDisplayName) || phBackground,
             // logo → 3:2, weserv contain+blur
-            logo:        buildPosterUrl(channel.logo, 'landscape')                          || phLandscape,
+            logo:        buildPosterUrl(channel.logo, 'landscape', null, channelDisplayName)                          || phLandscape,
             description: '',
             releaseInfo: 'LIVE',
             genre:       channel.genre,
@@ -178,9 +188,9 @@ async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epg
         if ((!meta.poster || !meta.background || !meta.logo) && channel.streamInfo?.tvg?.id) {
             const epgIcon = epgManager.getChannelIcon(normalizeId(channel.streamInfo.tvg.id));
             if (epgIcon) {
-                meta.poster     = meta.poster     || buildPosterUrl(epgIcon, 'poster');
-                meta.background = meta.background || buildPosterUrl(epgIcon, 'background', baseUrl);
-                meta.logo       = meta.logo       || buildPosterUrl(epgIcon, 'landscape');
+                meta.poster     = meta.poster     || buildPosterUrl(epgIcon, 'poster', null, channelDisplayName);
+                meta.background = meta.background || buildPosterUrl(epgIcon, 'background', baseUrl, channelDisplayName);
+                meta.logo       = meta.logo       || buildPosterUrl(epgIcon, 'landscape', null, channelDisplayName);
             }
         }
 
