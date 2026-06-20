@@ -254,7 +254,7 @@ app.get('/manifest.json', async (req, res) => {
         }
 
         builder.defineCatalogHandler(async (args) => catalogHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` }));
-        builder.defineStreamHandler(async (args) => streamHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner }));
+        builder.defineStreamHandler(async (args) => streamHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` }));
         builder.defineMetaHandler(async (args) => metaHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` }));
         res.setHeader('Content-Type', 'application/json');
         res.send(builder.getInterface().manifest);
@@ -347,7 +347,7 @@ app.get('/:config/manifest.json', async (req, res) => {
         }
 
         builder.defineCatalogHandler(async (args) => catalogHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` }));
-        builder.defineStreamHandler(async (args) => streamHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner }));
+        builder.defineStreamHandler(async (args) => streamHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` }));
         builder.defineMetaHandler(async (args) => metaHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` }));
 
         res.setHeader('Content-Type', 'application/json');
@@ -408,7 +408,8 @@ app.get('/:config/stream/:type/:id.json', async (req, res) => {
             cacheManager,
             epgManager,
             pythonResolver,
-            pythonRunner
+            pythonRunner,
+            baseUrl: `${req.protocol}://${req.get('host')}`
         });
 
         res.setHeader('Content-Type', 'application/json');
@@ -464,7 +465,7 @@ app.get('/:resource/:type/:id/:extra?.json', async (req, res, next) => {
         let result;
         switch (resource) {
             case 'stream':
-                result = await streamHandler({ type, id, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner });
+                result = await streamHandler({ type, id, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` });
                 break;
             case 'catalog':
                 result = await catalogHandler({ type, id, extra, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` });
@@ -492,9 +493,8 @@ const bgImageCache = new Map();
 const BG_IMAGE_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 
 // Background image: scarica il logo, lo rimpicciolisce al 40% e lo centra
-// su canvas 1280x720 con sfondo sfocato — evita l'effetto zoom di Stremio.
-// Usa Sharp (nativo libvips) se disponibile — 10-20× più veloce di Jimp.
-// Fallback automatico a Jimp se Sharp non è installato (es. HF senza rebuild).
+// su canvas 1280x720 con sfondo scurito — evita l'effetto zoom di Stremio.
+// Usa Jimp (puro JS, zero dipendenze native) — funziona su HF senza modifiche al Dockerfile.
 // GET /bg-image/:encodedLogoUrl
 app.get('/bg-image/:encodedUrl', async (req, res) => {
     const channelName = req.query.name || 'LIVE TV';
@@ -525,58 +525,16 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
         }
         const logoBuffer = Buffer.from(await logoResponse.arrayBuffer());
 
-        let buffer;
-
-        // ── Prova Sharp (veloce, nativo) ───────────────────────────────────
-        let sharpOk = false;
-        try {
-            const sharp = require('sharp');
-
-            // Metadata per calcolare il resize mantenendo le proporzioni
-            const meta = await sharp(logoBuffer).metadata();
-            const ratio = Math.min(LOGO_MAX_W / meta.width, LOGO_MAX_H / meta.height);
-            const logoW = Math.round(meta.width  * ratio);
-            const logoH = Math.round(meta.height * ratio);
-            const left  = Math.round((CANVAS_W - logoW) / 2);
-            const top   = Math.round((CANVAS_H - logoH) / 2);
-
-            // Sfondo: logo scalato a coprire il canvas e scurito
-            const bgBuffer = await sharp(logoBuffer)
-                .resize(CANVAS_W, CANVAS_H, { fit: 'cover' })
-                .modulate({ brightness: 0.45 })
-                .toBuffer();
-
-            // Logo ridimensionato mantenendo le proporzioni
-            const logoResized = await sharp(logoBuffer)
-                .resize(logoW, logoH, { fit: 'fill' })
-                .toBuffer();
-
-            // Composizione: sfondo + logo centrato
-            buffer = await sharp(bgBuffer)
-                .composite([{ input: logoResized, left, top }])
-                .png({ compressionLevel: 6 })
-                .toBuffer();
-
-            sharpOk = true;
-        } catch (sharpErr) {
-            // Sharp non disponibile — fallback a Jimp
-            logger.log('_', 'Sharp not available, falling back to Jimp:', sharpErr.message);
-        }
-
-        // ── Fallback Jimp (puro JS, zero dipendenze native) ───────────────
-        if (!sharpOk) {
-            const { Jimp } = require('jimp');
-            const logo = await Jimp.read(logoBuffer);
-            const logoResized = logo.clone().scaleToFit({ w: LOGO_MAX_W, h: LOGO_MAX_H });
-            const bg = logo.clone()
-                .cover({ w: CANVAS_W, h: CANVAS_H })
-                .brightness(-0.5);
-            const left = Math.round((CANVAS_W - logoResized.bitmap.width)  / 2);
-            const top  = Math.round((CANVAS_H - logoResized.bitmap.height) / 2);
-            bg.composite(logoResized, left, top);
-            buffer = await bg.getBuffer('image/png');
-        }
-        // ──────────────────────────────────────────────────────────────────
+        const { Jimp } = require('jimp');
+        const logo = await Jimp.read(logoBuffer);
+        const logoResized = logo.clone().scaleToFit({ w: LOGO_MAX_W, h: LOGO_MAX_H });
+        const bg = logo.clone()
+            .cover({ w: CANVAS_W, h: CANVAS_H })
+            .brightness(-0.5);
+        const left = Math.round((CANVAS_W - logoResized.bitmap.width)  / 2);
+        const top  = Math.round((CANVAS_H - logoResized.bitmap.height) / 2);
+        bg.composite(logoResized, left, top);
+        const buffer = await bg.getBuffer('image/png');
 
         // ── Salva in cache (evita ri-elaborazioni per 24h) ────────────────
         bgImageCache.set(logoUrl, { buffer, ts: Date.now() });
@@ -618,26 +576,39 @@ app.get('/ph-image', (req, res) => {
         return res.send(cached);
     }
 
-    // Font size: 22% della larghezza, min 80, max 280 — grande e leggibile su TV
-    const fontSize = Math.min(280, Math.max(80, Math.round(w * 0.22)));
+    // Calcola fontSize e word-wrap insieme:
+    // parte da un fontSize grande e lo scala finché tutto il testo sta nel canvas.
+    // Stima larghezza carattere = 0.58 × fontSize (Montserrat bold).
+    // Max 3 righe, padding orizzontale 8% per lato, padding verticale 10% per lato.
+    const PAD_X   = Math.round(w * 0.08);
+    const PAD_Y   = Math.round(h * 0.10);
+    const maxW    = w - PAD_X * 2;
+    const maxH    = h - PAD_Y * 2;
+    const words   = name.split(' ');
 
-    // Word-wrap manuale: spezza il nome in righe che stanno nel canvas
-    // (stima ~0.55× la font-size per carattere in Montserrat bold)
-    const charW     = fontSize * 0.55;
-    const maxChars  = Math.floor((w * 0.90) / charW); // usa il 90% della larghezza
-    const words     = name.split(' ');
-    const lines     = [];
-    let cur         = '';
-    for (const word of words) {
-        const test = cur ? `${cur} ${word}` : word;
-        if (test.length > maxChars && cur) { lines.push(cur); cur = word; }
-        else cur = test;
+    let fontSize, lines;
+    // Prova fontSize decrescente finché il testo sta nel canvas (max 3 righe)
+    for (fontSize = Math.round(Math.min(w, h) * 0.18); fontSize >= 24; fontSize -= 2) {
+        const charW   = fontSize * 0.58;
+        const maxChars = Math.floor(maxW / charW);
+        const wrapped = [];
+        let cur = '';
+        for (const word of words) {
+            const test = cur ? `${cur} ${word}` : word;
+            if (test.length > maxChars && cur) { wrapped.push(cur); cur = word; }
+            else cur = test;
+        }
+        if (cur) wrapped.push(cur);
+        const lineH  = fontSize * 1.25;
+        const totalH = wrapped.length * lineH;
+        if (totalH <= maxH) { lines = wrapped; break; }
     }
-    if (cur) lines.push(cur);
+    if (!lines) lines = [name.substring(0, 20)]; // fallback estremo
 
-    const lineH     = fontSize * 1.2;
-    const totalH    = lines.length * lineH;
-    const startY    = (h - totalH) / 2 + fontSize * 0.85; // prima baseline centrata
+    const lineH  = fontSize * 1.25;
+    const totalH = lines.length * lineH;
+    // Centra verticalmente: y della prima baseline
+    const startY = (h - totalH) / 2 + fontSize * 0.85;
 
     const tspans = lines.map((l, i) =>
         `<tspan x="50%" dy="${i === 0 ? 0 : lineH}">${l.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</tspan>`
@@ -647,7 +618,7 @@ app.get('/ph-image', (req, res) => {
   <rect width="${w}" height="${h}" fill="#1a1a2e"/>
   <text x="50%" y="${Math.round(startY)}" text-anchor="middle"
         font-family="Montserrat, Arial, sans-serif" font-weight="700"
-        font-size="${fontSize}" fill="#cc5500" letter-spacing="0.5">
+        font-size="${fontSize}" fill="#cc5500">
     ${tspans}
   </text>
 </svg>`;
