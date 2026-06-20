@@ -253,8 +253,8 @@ app.get('/manifest.json', async (req, res) => {
             if (epgToUse) await epgManager.initializeEPG(epgToUse);
         }
 
-        builder.defineCatalogHandler(async (args) => catalogHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` }));
-        builder.defineStreamHandler(async (args) => streamHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` }));
+        builder.defineCatalogHandler(async (args) => catalogHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner }));
+        builder.defineStreamHandler(async (args) => streamHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner }));
         builder.defineMetaHandler(async (args) => metaHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` }));
         res.setHeader('Content-Type', 'application/json');
         res.send(builder.getInterface().manifest);
@@ -346,8 +346,8 @@ app.get('/:config/manifest.json', async (req, res) => {
             if (epgToUse) await epgManager.initializeEPG(epgToUse);
         }
 
-        builder.defineCatalogHandler(async (args) => catalogHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` }));
-        builder.defineStreamHandler(async (args) => streamHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` }));
+        builder.defineCatalogHandler(async (args) => catalogHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner }));
+        builder.defineStreamHandler(async (args) => streamHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner }));
         builder.defineMetaHandler(async (args) => metaHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` }));
 
         res.setHeader('Content-Type', 'application/json');
@@ -379,8 +379,7 @@ app.get('/:config/catalog/:type/:id/:extra?.json', async (req, res) => {
             cacheManager,
             epgManager,
             pythonResolver,
-            pythonRunner,
-            baseUrl: `${req.protocol}://${req.get('host')}`
+            pythonRunner
         });
 
         res.setHeader('Content-Type', 'application/json');
@@ -408,8 +407,7 @@ app.get('/:config/stream/:type/:id.json', async (req, res) => {
             cacheManager,
             epgManager,
             pythonResolver,
-            pythonRunner,
-            baseUrl: `${req.protocol}://${req.get('host')}`
+            pythonRunner
         });
 
         res.setHeader('Content-Type', 'application/json');
@@ -465,10 +463,10 @@ app.get('/:resource/:type/:id/:extra?.json', async (req, res, next) => {
         let result;
         switch (resource) {
             case 'stream':
-                result = await streamHandler({ type, id, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` });
+                result = await streamHandler({ type, id, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner });
                 break;
             case 'catalog':
-                result = await catalogHandler({ type, id, extra, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` });
+                result = await catalogHandler({ type, id, extra, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner });
                 break;
             case 'meta':
                 result = await metaHandler({ type, id, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` });
@@ -486,150 +484,60 @@ app.get('/:resource/:type/:id/:extra?.json', async (req, res, next) => {
     }
 });
 
-// Cache in-memory per i loghi già elaborati da /bg-image.
-// Chiave: logoUrl → { buffer: Buffer, ts: Date.now() }
-// TTL: 24 ore (stessa policy del Cache-Control inviato al client).
-const bgImageCache = new Map();
-const BG_IMAGE_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
-
 // Background image: scarica il logo, lo rimpicciolisce al 40% e lo centra
-// su canvas 1280x720 con sfondo scurito — evita l'effetto zoom di Stremio.
+// su canvas 1280x720 con sfondo sfocato — evita l'effetto zoom di Stremio.
 // Usa Jimp (puro JS, zero dipendenze native) — funziona su HF senza modifiche al Dockerfile.
 // GET /bg-image/:encodedLogoUrl
 app.get('/bg-image/:encodedUrl', async (req, res) => {
     const channelName = req.query.name || 'LIVE TV';
     try {
+        const { Jimp } = require('jimp');
         const logoUrl = decodeURIComponent(req.params.encodedUrl);
-
-        // ── Cache hit ──────────────────────────────────────────────────────
-        const cached = bgImageCache.get(logoUrl);
-        if (cached && (Date.now() - cached.ts) < BG_IMAGE_CACHE_TTL_MS) {
-            res.setHeader('Content-Type', 'image/png');
-            res.setHeader('Cache-Control', 'public, max-age=86400');
-            res.setHeader('X-BgImage-Cache', 'HIT');
-            return res.send(cached.buffer);
-        }
-        // ──────────────────────────────────────────────────────────────────
 
         const CANVAS_W   = 1280;
         const CANVAS_H   = 720;
         const LOGO_MAX_W = Math.round(CANVAS_W * 0.40); // 512px
         const LOGO_MAX_H = Math.round(CANVAS_H * 0.40); // 288px
 
-        // Scarica il logo con User-Agent civile (alcuni host rifiutano senza UA)
+        // Scarichiamo noi il logo con uno User-Agent "civile": alcuni host
+        // (es. upload.wikimedia.org) rifiutano richieste senza UA con HTTP 400/403,
+        // e Jimp.read(url) non permette di impostare header custom.
         const logoResponse = await fetch(logoUrl, {
             headers: { 'User-Agent': config.defaultUserAgent }
         });
         if (!logoResponse.ok) {
             throw new Error(`HTTP Status ${logoResponse.status} for url ${logoUrl}`);
         }
-        const logoBuffer = Buffer.from(await logoResponse.arrayBuffer());
+        const logoArrayBuffer = await logoResponse.arrayBuffer();
+        const logo = await Jimp.read(Buffer.from(logoArrayBuffer));
 
-        const { Jimp } = require('jimp');
-        const logo = await Jimp.read(logoBuffer);
+        // Logo ridimensionato mantenendo le proporzioni
         const logoResized = logo.clone().scaleToFit({ w: LOGO_MAX_W, h: LOGO_MAX_H });
+
+        // Sfondo: logo sfocato, scurito e scalato a coprire il canvas
         const bg = logo.clone()
             .cover({ w: CANVAS_W, h: CANVAS_H })
+            .blur(20)
             .brightness(-0.5);
+
+        // Composizione: sfondo + logo centrato
         const left = Math.round((CANVAS_W - logoResized.bitmap.width)  / 2);
         const top  = Math.round((CANVAS_H - logoResized.bitmap.height) / 2);
+
         bg.composite(logoResized, left, top);
+
         const buffer = await bg.getBuffer('image/png');
-
-        // ── Salva in cache (evita ri-elaborazioni per 24h) ────────────────
-        bgImageCache.set(logoUrl, { buffer, ts: Date.now() });
-        if (bgImageCache.size % 100 === 0) {
-            const now = Date.now();
-            for (const [k, v] of bgImageCache) {
-                if (now - v.ts > BG_IMAGE_CACHE_TTL_MS) bgImageCache.delete(k);
-            }
-        }
-        // ──────────────────────────────────────────────────────────────────
-
         res.setHeader('Content-Type', 'image/png');
         res.setHeader('Cache-Control', 'public, max-age=86400');
-        res.setHeader('X-BgImage-Cache', 'MISS');
         res.send(buffer);
     } catch (e) {
+        // Link del logo rotto/irraggiungibile (o bloccato dall'host sorgente):
+        // redirige al placeholder col nome canale invece di restituire un errore
+        // (che Stremio mostra come riquadro vuoto).
         logger.error('_', 'bg-image error, falling back to placeholder:', e.message);
         const label = channelName.substring(0, 24).trim();
         res.redirect(302, `https://placehold.co/1280x720/1a1a2e/cc5500.png?font=montserrat&text=${encodeURIComponent(label)}`);
     }
-});
-
-// ── Placeholder interno con testo grande e word-wrap ──────────────────────────
-// GET /ph-image?name=NOME&w=400&h=600
-// Genera un SVG con sfondo scuro, testo arancione centrato e word-wrap automatico.
-// Usato al posto di placehold.co per i canali senza logo — testo sempre leggibile
-// su TV indipendentemente dal formato (poster, landscape, background).
-const phImageCache = new Map();
-app.get('/ph-image', (req, res) => {
-    const name  = (req.query.name  || 'LIVE TV').trim();
-    const w     = Math.min(Math.max(parseInt(req.query.w, 10) || 400, 100), 1920);
-    const h     = Math.min(Math.max(parseInt(req.query.h, 10) || 600, 100), 1080);
-    const cacheKey = `${w}x${h}:${name}`;
-
-    const cached = phImageCache.get(cacheKey);
-    if (cached) {
-        res.setHeader('Content-Type', 'image/svg+xml');
-        res.setHeader('Cache-Control', 'public, max-age=86400');
-        return res.send(cached);
-    }
-
-    // Calcola fontSize e word-wrap insieme:
-    // parte da un fontSize grande e lo scala finché tutto il testo sta nel canvas.
-    // Stima larghezza carattere = 0.58 × fontSize (Montserrat bold).
-    // Max 3 righe, padding orizzontale 8% per lato, padding verticale 10% per lato.
-    const PAD_X   = Math.round(w * 0.08);
-    const PAD_Y   = Math.round(h * 0.10);
-    const maxW    = w - PAD_X * 2;
-    const maxH    = h - PAD_Y * 2;
-    const words   = name.split(' ');
-
-    let fontSize, lines;
-    // Per formato 2:3 (poster portrait) riduci il fontSize del 20% rispetto ai formati landscape
-    const isPortrait = h > w;
-    const fontSizeScale = isPortrait ? 0.144 : 0.18; // 0.18 * 0.80 = 0.144 per 2:3
-    // Prova fontSize decrescente finché il testo sta nel canvas (max 3 righe)
-    for (fontSize = Math.round(Math.min(w, h) * fontSizeScale); fontSize >= 24; fontSize -= 2) {
-        const charW   = fontSize * 0.58;
-        const maxChars = Math.floor(maxW / charW);
-        const wrapped = [];
-        let cur = '';
-        for (const word of words) {
-            const test = cur ? `${cur} ${word}` : word;
-            if (test.length > maxChars && cur) { wrapped.push(cur); cur = word; }
-            else cur = test;
-        }
-        if (cur) wrapped.push(cur);
-        const lineH  = fontSize * 1.25;
-        const totalH = wrapped.length * lineH;
-        if (totalH <= maxH) { lines = wrapped; break; }
-    }
-    if (!lines) lines = [name.substring(0, 20)]; // fallback estremo
-
-    const lineH  = fontSize * 1.25;
-    const totalH = lines.length * lineH;
-    // Centra verticalmente: y della prima baseline
-    const startY = (h - totalH) / 2 + fontSize * 0.85;
-
-    const tspans = lines.map((l, i) =>
-        `<tspan x="50%" dy="${i === 0 ? 0 : lineH}">${l.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</tspan>`
-    ).join('');
-
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
-  <rect width="${w}" height="${h}" fill="#1a1a2e"/>
-  <text x="50%" y="${Math.round(startY)}" text-anchor="middle"
-        font-family="Montserrat, Arial, sans-serif" font-weight="700"
-        font-size="${fontSize}" fill="#cc5500">
-    ${tspans}
-  </text>
-</svg>`;
-
-    phImageCache.set(cacheKey, svg);
-    res.setHeader('Content-Type', 'image/svg+xml');
-    res.setHeader('Cache-Control', 'public, max-age=86400');
-    res.send(svg);
 });
 
 //route download template
