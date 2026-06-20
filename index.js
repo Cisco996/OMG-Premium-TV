@@ -65,7 +65,24 @@ function touchSession(sessionKey) {
 async function getCacheManager(sessionId, userConfig) {
     const key = (sessionId && String(sessionId).trim()) ? String(sessionId).trim() : getSessionKeyFromConfig(userConfig);
     if (!cacheRegistry.has(key)) {
-        cacheRegistry.set(key, await CacheManagerFactory(userConfig || {}, key === '_default' ? null : key));
+        const cm = await CacheManagerFactory(userConfig || {}, key === '_default' ? null : key);
+        // Warmup bg-image cache ogni volta che i canali vengono (ri)caricati
+        cm.on('cacheUpdated', (cache) => {
+            const channels = cache?.stremioData?.channels;
+            if (channels?.length) {
+                warmupBgCache(channels).catch(e =>
+                    logger.error('_', 'bg-image warmup error:', e.message)
+                );
+            }
+        });
+        // Se i canali sono già in cache al momento della registrazione, warmup immediato
+        const existing = cm.cache?.stremioData?.channels;
+        if (existing?.length) {
+            warmupBgCache(existing).catch(e =>
+                logger.error('_', 'bg-image warmup error:', e.message)
+            );
+        }
+        cacheRegistry.set(key, cm);
     }
     const cm = cacheRegistry.get(key);
     cm.sessionKey = key;
@@ -484,59 +501,94 @@ app.get('/:resource/:type/:id/:extra?.json', async (req, res, next) => {
     }
 });
 
+// ─── Cache permanente in-memory per /bg-image ────────────────────────────────
+// Chiave: logoUrl → Buffer PNG già elaborato da Jimp.
+// La cache non scade: i logo sono fissi per tutta la vita del processo.
+// Al primo caricamento dei canali (evento cacheUpdated) tutti i logo vengono
+// pre-elaborati in background (warmup) → le richieste di Stremio trovano
+// sempre la cache già pronta.
+const bgImageCache = new Map();
+
+const CANVAS_W   = 1280;
+const CANVAS_H   = 720;
+const LOGO_MAX_W = Math.round(CANVAS_W * 0.40); // 512px
+const LOGO_MAX_H = Math.round(CANVAS_H * 0.40); // 288px
+
+async function buildBgBuffer(logoUrl) {
+    const { Jimp } = require('jimp');
+    const logoResponse = await fetch(logoUrl, {
+        headers: { 'User-Agent': config.defaultUserAgent }
+    });
+    if (!logoResponse.ok) throw new Error(`HTTP ${logoResponse.status} for ${logoUrl}`);
+    const logo = await Jimp.read(Buffer.from(await logoResponse.arrayBuffer()));
+    const logoResized = logo.clone().scaleToFit({ w: LOGO_MAX_W, h: LOGO_MAX_H });
+    const bg = logo.clone()
+        .cover({ w: CANVAS_W, h: CANVAS_H })
+        .blur(20)
+        .brightness(-0.5);
+    const left = Math.round((CANVAS_W - logoResized.bitmap.width)  / 2);
+    const top  = Math.round((CANVAS_H - logoResized.bitmap.height) / 2);
+    bg.composite(logoResized, left, top);
+    return bg.getBuffer('image/png');
+}
+
+// Warmup: pre-elabora tutti i logo dei canali in background, con concorrenza
+// limitata a 5 fetch/Jimp paralleli per non saturare la rete all'avvio.
+async function warmupBgCache(channels) {
+    const logoUrls = [...new Set(
+        channels.map(ch => ch.logo || ch.poster || ch.background).filter(Boolean)
+    )];
+    const todo = logoUrls.filter(url => !bgImageCache.has(url));
+    if (!todo.length) return;
+    logger.log('_', `bg-image warmup: ${todo.length} logo da elaborare…`);
+
+    const CONCURRENCY = 5;
+    let i = 0;
+    async function worker() {
+        while (i < todo.length) {
+            const url = todo[i++];
+            try {
+                const buffer = await buildBgBuffer(url);
+                bgImageCache.set(url, buffer);
+            } catch (e) {
+                // Logo non raggiungibile: verrà gestito dal fallback al momento della richiesta
+                logger.warn('_', `bg-image warmup skip: ${e.message}`);
+            }
+        }
+    }
+    await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+    logger.log('_', `bg-image warmup completato: ${bgImageCache.size} logo in cache.`);
+}
+
 // Background image: scarica il logo, lo rimpicciolisce al 40% e lo centra
 // su canvas 1280x720 con sfondo sfocato — evita l'effetto zoom di Stremio.
 // Usa Jimp (puro JS, zero dipendenze native) — funziona su HF senza modifiche al Dockerfile.
+// Il risultato è cachato permanentemente in memoria; il warmup all'avvio lo pre-popola.
 // GET /bg-image/:encodedLogoUrl
 app.get('/bg-image/:encodedUrl', async (req, res) => {
     const channelName = req.query.name || 'LIVE TV';
-    try {
-        const { Jimp } = require('jimp');
-        const logoUrl = decodeURIComponent(req.params.encodedUrl);
+    const logoUrl = decodeURIComponent(req.params.encodedUrl);
 
-        const CANVAS_W   = 1280;
-        const CANVAS_H   = 720;
-        const LOGO_MAX_W = Math.round(CANVAS_W * 0.40); // 512px
-        const LOGO_MAX_H = Math.round(CANVAS_H * 0.40); // 288px
-
-        // Scarichiamo noi il logo con uno User-Agent "civile": alcuni host
-        // (es. upload.wikimedia.org) rifiutano richieste senza UA con HTTP 400/403,
-        // e Jimp.read(url) non permette di impostare header custom.
-        const logoResponse = await fetch(logoUrl, {
-            headers: { 'User-Agent': config.defaultUserAgent }
-        });
-        if (!logoResponse.ok) {
-            throw new Error(`HTTP Status ${logoResponse.status} for url ${logoUrl}`);
-        }
-        const logoArrayBuffer = await logoResponse.arrayBuffer();
-        const logo = await Jimp.read(Buffer.from(logoArrayBuffer));
-
-        // Logo ridimensionato mantenendo le proporzioni
-        const logoResized = logo.clone().scaleToFit({ w: LOGO_MAX_W, h: LOGO_MAX_H });
-
-        // Sfondo: logo sfocato, scurito e scalato a coprire il canvas
-        const bg = logo.clone()
-            .cover({ w: CANVAS_W, h: CANVAS_H })
-            .blur(20)
-            .brightness(-0.5);
-
-        // Composizione: sfondo + logo centrato
-        const left = Math.round((CANVAS_W - logoResized.bitmap.width)  / 2);
-        const top  = Math.round((CANVAS_H - logoResized.bitmap.height) / 2);
-
-        bg.composite(logoResized, left, top);
-
-        const buffer = await bg.getBuffer('image/png');
+    // ── Cache hit ──────────────────────────────────────────────────────────
+    if (bgImageCache.has(logoUrl)) {
         res.setHeader('Content-Type', 'image/png');
         res.setHeader('Cache-Control', 'public, max-age=86400');
+        res.setHeader('X-BG-Cache', 'HIT');
+        return res.send(bgImageCache.get(logoUrl));
+    }
+
+    // ── Cache miss: elabora con Jimp e salva permanentemente ──────────────
+    try {
+        const buffer = await buildBgBuffer(logoUrl);
+        bgImageCache.set(logoUrl, buffer);
+        res.setHeader('Content-Type', 'image/png');
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        res.setHeader('X-BG-Cache', 'MISS');
         res.send(buffer);
     } catch (e) {
-        // Link del logo rotto/irraggiungibile (o bloccato dall'host sorgente):
-        // redirige al placeholder col nome canale invece di restituire un errore
-        // (che Stremio mostra come riquadro vuoto).
         logger.error('_', 'bg-image error, falling back to placeholder:', e.message);
-        const label = channelName.substring(0, 24).trim();
-        res.redirect(302, `https://placehold.co/1280x720/1a1a2e/cc5500.png?font=montserrat&text=${encodeURIComponent(label)}`);
+        const label = channelName.substring(0, 30).trim();
+        res.redirect(302, `https://placehold.co/1280x720/1a1a2e/cc5500.png?font=montserrat&text=${encodeURIComponent(label)}&fontSize=120`);
     }
 });
 
