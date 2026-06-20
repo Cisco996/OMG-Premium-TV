@@ -179,11 +179,11 @@ async function catalogHandler({ type, id, extra, config: userConfig, cacheManage
                 id: channel.id,
                 type: 'tv',
                 name: `${channel.name} [${languageAbbr}]`,
-                // poster → 2:3, sfondo trasparente (transparent=true), come il logo 3:2
-                poster: buildPosterUrl(rawIcon, 400, 600, channel.name, baseUrl, true),
+                // poster → 2:3 con sfondo scuro (cbg=1a1a2e): logo ridotto nel canvas come vecchia versione
+                poster: buildPosterUrl(rawIcon, 400, 600, channel.name, baseUrl),
                 background: rawIcon ? buildPosterUrl(channel.background || channel.logo, 1280, 720, channel.name, baseUrl) : null,
-                // logo → 3:2, sfondo trasparente (transparent=true): deve restare vuoto come il poster 2:3
-                logo: buildPosterUrl(logoUrl, 600, 400, channel.name, baseUrl, true),
+                // logo → 3:2 con sfondo scuro (cbg=1a1a2e): comportamento identico al poster 2:3
+                logo: buildPosterUrl(logoUrl, 600, 400, channel.name, baseUrl),
                 description: channel.description || `Channel: ${channel.name} - ID: ${channel.streamInfo?.tvg?.id}`,
                 genre: channel.genre,
                 posterShape: channel.posterShape || 'poster',
@@ -203,9 +203,9 @@ async function catalogHandler({ type, id, extra, config: userConfig, cacheManage
                 const epgIcon   = epgManager.getChannelIcon(channel.streamInfo.tvg.id);
                 const epgIconOk = epgIcon ? await isLogoReachable(epgIcon) : false;
                 if (epgIcon && epgIconOk) {
-                    meta.poster = buildPosterUrl(epgIcon, 400, 600, channel.name, baseUrl, true);
+                    meta.poster = buildPosterUrl(epgIcon, 400, 600, channel.name, baseUrl);
                     meta.background = buildPosterUrl(epgIcon, 1280, 720, channel.name, baseUrl);
-                    meta.logo = buildPosterUrl(epgIcon, 600, 400, channel.name, baseUrl, true);
+                    meta.logo = buildPosterUrl(epgIcon, 600, 400, channel.name, baseUrl);
                 }
             }
 
@@ -487,11 +487,11 @@ async function streamHandler({ id, config: userConfig, cacheManager: cm, epgMana
             id: channel.id,
             type: 'tv',
             name: channel.name,
-            // poster → 2:3, sfondo trasparente (transparent=true), come il logo 3:2
-            poster: buildPosterUrl(rawIcon, 400, 600, channel.name, baseUrl, true),
+            // poster → 2:3 con sfondo scuro (cbg=1a1a2e): logo ridotto nel canvas come vecchia versione
+            poster: buildPosterUrl(rawIcon, 400, 600, channel.name, baseUrl),
             background: rawIconOk ? buildPosterUrl(channel.background || channel.logo, 1280, 720, channel.name, baseUrl) : null,
-            // logo → 3:2, sfondo trasparente (transparent=true): comportamento identico al poster 2:3
-            logo: buildPosterUrl(logoUrl, 600, 400, channel.name, baseUrl, true),
+            // logo → 3:2 con sfondo scuro (cbg=1a1a2e): comportamento identico al poster 2:3
+            logo: buildPosterUrl(logoUrl, 600, 400, channel.name, baseUrl),
             description: channel.description || `Channel ID: ${channel.streamInfo?.tvg?.id}`,
             genre: channel.genre,
             posterShape: channel.posterShape || 'poster',
@@ -507,9 +507,9 @@ async function streamHandler({ id, config: userConfig, cacheManager: cm, epgMana
             const epgIcon   = epgManager.getChannelIcon(channel.streamInfo.tvg.id);
             const epgIconOk = epgIcon ? await isLogoReachable(epgIcon) : false;
             if (epgIcon && epgIconOk) {
-                meta.poster     = buildPosterUrl(epgIcon, 400, 600, channel.name, baseUrl, true);
+                meta.poster     = buildPosterUrl(epgIcon, 400, 600, channel.name, baseUrl);
                 meta.background = buildPosterUrl(epgIcon, 1280, 720, channel.name, baseUrl);
-                meta.logo       = buildPosterUrl(epgIcon, 600, 400, channel.name, baseUrl, true);
+                meta.logo       = buildPosterUrl(epgIcon, 600, 400, channel.name, baseUrl);
             }
         }
 
