@@ -89,19 +89,16 @@ function buildPosterUrl(imageUrl, shape = 'poster') {
     if (!imageUrl) return null;
     const base = 'https://images.weserv.nl/?url=' + encodeURIComponent(imageUrl);
     if (shape === 'landscape') {
-        // 3:2 wide — logo centrato orizzontalmente
-        return `${base}&w=600&h=400&fit=contain&cbg=1a1a2e`;
+        return `${base}&w=600&h=400&fit=contain&bg=blur`;
     }
     if (shape === 'square') {
-        return `${base}&w=400&h=400&fit=contain&cbg=1a1a2e`;
+        return `${base}&w=400&h=400&fit=contain&bg=blur`;
     }
     if (shape === 'background') {
-        // Scheda dettaglio Stremio: risoluzione alta, logo contenuto con
-        // molto spazio attorno per evitare l'effetto "zoommatissimo".
-        return `${base}&w=1280&h=720&fit=contain&cbg=1a1a2e`;
+        return `${base}&w=1280&h=720&fit=contain&bg=blur`;
     }
     // default: 'poster' → 2:3 tall
-    return `${base}&w=400&h=600&fit=contain&cbg=1a1a2e`;
+    return `${base}&w=400&h=600&fit=contain&bg=blur`;
 }
 
 async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epgManager: em }) {
