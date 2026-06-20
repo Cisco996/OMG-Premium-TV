@@ -10,8 +10,9 @@ const PH_FONT = 'montserrat';
 // ─── Helpers immagini ────────────────────────────────────────────────────────
 
 /**
- * Costruisce un URL weserv con fit=contain e sfondo blur.
+ * Costruisce un URL weserv con fit=contain e sfondo trasparente (nessun blur).
  * shape: 'poster' (2:3) | 'landscape' (3:2) | 'square' (1:1)
+ * Per poster e landscape: contain puro senza bg=blur → logo visibile intero, sfondo trasparente.
  * Per 'background' usa l'endpoint interno /bg-image che rimpicciolisce
  * il logo al 40% su canvas 1280x720 con sfondo sfocato (come tvvoo).
  */
@@ -19,12 +20,13 @@ function buildPosterUrl(imageUrl, shape = 'poster', baseUrl = null, channelName 
     if (!imageUrl) return null;
     const base = 'https://images.weserv.nl/?url=' + encodeURIComponent(imageUrl);
     if (shape === 'landscape') {
+        // 3:2 — contain puro, nessun blur di sfondo: logo visibile interamente
         const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '600x400'));
-        return `${base}&w=600&h=400&fit=contain&bg=blur&default=${fb}`;
+        return `${base}&w=600&h=400&fit=contain&default=${fb}`;
     }
     if (shape === 'square') {
         const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '400x400'));
-        return `${base}&w=400&h=400&fit=contain&bg=blur&default=${fb}`;
+        return `${base}&w=400&h=400&fit=contain&default=${fb}`;
     }
     if (shape === 'background') {
         // Usa endpoint interno se disponibile (logo rimpicciolito centrato);
@@ -35,19 +37,20 @@ function buildPosterUrl(imageUrl, shape = 'poster', baseUrl = null, channelName 
         const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '1280x720'));
         return `${base}&w=1280&h=720&fit=contain&bg=blur&default=${fb}`;
     }
-    // default: poster 2:3
+    // default: poster 2:3 — contain puro, nessun blur di sfondo: logo visibile interamente
     const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '400x600'));
-    return `${base}&w=400&h=600&fit=contain&bg=blur&default=${fb}`;
+    return `${base}&w=400&h=600&fit=contain&default=${fb}`;
 }
 
 /**
  * Costruisce un URL placehold.co per canali senza logo.
- * Sfondo #1a1a2e, testo arancione #cc5500, font Montserrat.
+ * Sfondo #1a1a2e, testo arancione #cc5500, font Montserrat — testo ingrandito.
  */
 function buildPlaceholderUrl(channelName, size) {
     const label = (channelName || 'LIVE TV').substring(0, 24).trim();
     const text  = encodeURIComponent(label);
-    return `https://placehold.co/${size}/${PH_BG}/${PH_FG}.png?font=${PH_FONT}&text=${text}`;
+    // fontSize=80 → testo grande e leggibile nel carosello Stremio
+    return `https://placehold.co/${size}/${PH_BG}/${PH_FG}.png?font=${PH_FONT}&text=${text}&fontSize=80`;
 }
 
 // ─── i18n ────────────────────────────────────────────────────────────────────
