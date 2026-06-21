@@ -484,66 +484,6 @@ app.get('/:resource/:type/:id/:extra?.json', async (req, res, next) => {
     }
 });
 
-// Placeholder testuale generato internamente: sfondo blu #1a1a2e, testo arancione #cc5500,
-// testo centrato perfettamente (orizzontalmente e verticalmente) su qualsiasi dimensione.
-// Risolve il problema di placehold.co che su 16:9 mostra il testo in basso su alcuni client.
-// GET /text-image/:w/:h?name=NomeCanale
-app.get('/text-image/:w/:h', async (req, res) => {
-    const W    = parseInt(req.params.w,  10) || 1280;
-    const H    = parseInt(req.params.h,  10) || 720;
-    const name = (req.query.name || 'LIVE TV').substring(0, 24).trim();
-    try {
-        const { loadFont, measureText, measureTextHeight, Jimp, JimpMime } = require('jimp');
-        const path = require('path');
-
-        // Font size proporzionale all'immagine — scegliamo il più grande che non supera H/6
-        const targetH = Math.round(H / 6);
-        // Font disponibili (white): 8, 16, 32, 64, 128
-        let fontSize = 64;
-        if (targetH < 20) fontSize = 16;
-        else if (targetH < 40) fontSize = 32;
-        else if (targetH < 75) fontSize = 64;
-        else fontSize = 128;
-
-        const fontPath = path.join(
-            __dirname,
-            `node_modules/@jimp/plugin-print/dist/fonts/open-sans/open-sans-${fontSize}-white/open-sans-${fontSize}-white.fnt`
-        );
-        const font = await loadFont(fontPath);
-
-        // Misura il testo per centrarlo
-        const textW = measureText(font, name);
-        const textH = measureTextHeight(font, name, W);
-        const x = Math.max(0, Math.round((W - textW)  / 2));
-        const y = Math.max(0, Math.round((H - textH)  / 2));
-
-        // Sfondo blu scuro uniforme
-        const img = new Jimp({ width: W, height: H, color: 0x1a1a2eff });
-        img.print({ font, x, y, text: name });
-
-        // Tint arancione #cc5500: i pixel bianchi (testo) diventano arancioni
-        img.scan(0, 0, W, H, function(px, py, idx) {
-            const r = this.bitmap.data[idx + 0];
-            const g = this.bitmap.data[idx + 1];
-            const b = this.bitmap.data[idx + 2];
-            const a = this.bitmap.data[idx + 3];
-            if (a > 0 && r > 200 && g > 200 && b > 200) {
-                this.bitmap.data[idx + 0] = 204; // R → #cc
-                this.bitmap.data[idx + 1] = 85;  // G → #55
-                this.bitmap.data[idx + 2] = 0;   // B → #00
-            }
-        });
-
-        const buffer = await img.getBuffer(JimpMime.png);
-        res.setHeader('Content-Type', 'image/png');
-        res.setHeader('Cache-Control', 'public, max-age=86400');
-        res.send(buffer);
-    } catch (e) {
-        logger.error('_', 'text-image error, falling back to placehold.co:', e.message);
-        res.redirect(302, `https://placehold.co/${W}x${H}/1a1a2e/cc5500.png?font=montserrat&text=${encodeURIComponent(name)}&fontSize=80`);
-    }
-});
-
 // Background image: scarica il logo, lo rimpicciolisce al 40% e lo centra
 // su canvas 1280x720 con sfondo sfocato — evita l'effetto zoom di Stremio.
 // Usa Jimp (puro JS, zero dipendenze native) — funziona su HF senza modifiche al Dockerfile.
@@ -594,10 +534,9 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
         // Link del logo rotto/irraggiungibile (o bloccato dall'host sorgente):
         // redirige al placeholder col nome canale invece di restituire un errore
         // (che Stremio mostra come riquadro vuoto).
-        logger.error('_', 'bg-image error, falling back to text-image:', e.message);
+        logger.error('_', 'bg-image error, falling back to placeholder:', e.message);
         const label = channelName.substring(0, 24).trim();
-        // Usa l'endpoint interno /text-image che centra il testo perfettamente (no placehold.co)
-        res.redirect(302, `/text-image/1280/720?name=${encodeURIComponent(label)}`);
+        res.redirect(302, `https://placehold.co/1280x720/1a1a2e/cc5500.png?font=montserrat&text=${encodeURIComponent(label)}`);
     }
 });
 
