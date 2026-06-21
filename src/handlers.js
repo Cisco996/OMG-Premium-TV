@@ -1,7 +1,6 @@
 const config = require('./config');
 const EPGManager = require('./epg-manager');
 const logger = require('./logger');
-const { isLogoReachable } = require('./logo-checker');
 const StreamProxyManager = require('./stream-proxy-manager')(config);
 const ResolverStreamManager = require('./resolver-stream-manager')(config);
 const { I18N } = require('../views/views-i18n');
@@ -91,21 +90,25 @@ function buildPlaceholderUrl(channelName, size, baseUrl = null) {
 function buildPosterUrl(imageUrl, w, h, channelName, baseUrl = null) {
     const fallback = buildPlaceholderUrl(channelName, `${w}x${h}`, baseUrl);
     if (!imageUrl) return fallback;
-    // Per background (1280x720) usa /bg-image (logo+blur, gestito separatamente)
+    const url  = encodeURIComponent(imageUrl);
+    const name = encodeURIComponent(channelName || '');
+    // background 1280x720 → /bg-image (logo+blur su sfondo sfocato)
     const isBackground = (w === 1280 && h === 720);
     if (isBackground) {
-        if (baseUrl) return `${baseUrl}/bg-image/${encodeURIComponent(imageUrl)}?name=${encodeURIComponent(channelName || '')}`;
-        // fallback weserv se baseUrl non disponibile
-        return `https://images.weserv.nl/?url=${encodeURIComponent(imageUrl)}&w=1280&h=720&fit=contain&cbg=1a1a2e&default=${encodeURIComponent(fallback)}`;
+        if (baseUrl) return `${baseUrl}/bg-image/${encodeURIComponent(imageUrl)}?name=${name}`;
+        return `https://images.weserv.nl/?url=${url}&w=1280&h=720&fit=contain&cbg=1a1a2e&default=${encodeURIComponent(fallback)}`;
     }
-    // Per poster (2:3) e logo (3:2): usa /logo-image interno (cache 24h, sfondo scuro, logo 60%)
+    // logo 3:2 (600x400) → trasparente, nessun sfondo
+    const isLandscape = (w > h);
     if (baseUrl) {
-        return `${baseUrl}/logo-image?url=${encodeURIComponent(imageUrl)}&w=${w}&h=${h}&name=${encodeURIComponent(channelName || '')}`;
+        const transparent = isLandscape ? '&transparent=1' : '';
+        return `${baseUrl}/logo-image?url=${url}&w=${w}&h=${h}&name=${name}${transparent}`;
     }
-    // fallback weserv se baseUrl non disponibile
+    // fallback weserv senza baseUrl
     const logoW = Math.round(w * 0.6);
     const logoH = Math.round(h * 0.6);
-    return `https://images.weserv.nl/?url=${encodeURIComponent(imageUrl)}&w=${logoW}&h=${logoH}&fit=contain&cbg=1a1a2e&canvas=${w},${h}&default=${encodeURIComponent(fallback)}`;
+    const bgParam = isLandscape ? '' : '&cbg=1a1a2e';
+    return `https://images.weserv.nl/?url=${url}&w=${logoW}&h=${logoH}&fit=contain${bgParam}&canvas=${w},${h}&default=${encodeURIComponent(fallback)}`;
 }
 
 async function catalogHandler({ type, id, extra, config: userConfig, cacheManager: cm, epgManager: em, pythonResolver, pythonRunner, baseUrl }) {
@@ -171,17 +174,15 @@ async function catalogHandler({ type, id, extra, config: userConfig, cacheManage
         const metas = await Promise.all(paginatedChannels.map(async channel => {
             const language = getLanguageFromConfig(userConfig);
             const languageAbbr = language.substring(0, 3).toUpperCase();
-            const rawIconCandidate = channel.poster || channel.logo || channel.background;
-            const rawIconOk = rawIconCandidate ? await isLogoReachable(rawIconCandidate) : false;
-            const rawIcon = rawIconOk ? (channel.poster || channel.logo) : null;
-            const logoUrl = rawIconOk ? channel.logo : null;
+            const rawIcon = channel.poster || channel.logo || null;
+            const logoUrl = channel.logo || null;
 
             const meta = {
                 id: channel.id,
                 type: 'tv',
                 name: `${channel.name} [${languageAbbr}]`,
                 poster: buildPosterUrl(rawIcon, 400, 600, channel.name, baseUrl),
-                background: buildPosterUrl(rawIconOk ? (channel.background || channel.logo) : null, 1280, 720, channel.name, baseUrl),
+                background: buildPosterUrl(channel.background || channel.logo || null, 1280, 720, channel.name, baseUrl),
                 logo: buildPosterUrl(logoUrl, 600, 400, channel.name, baseUrl),
                 description: channel.description || `Channel: ${channel.name} - ID: ${channel.streamInfo?.tvg?.id}`,
                 genre: channel.genre,
@@ -200,8 +201,7 @@ async function catalogHandler({ type, id, extra, config: userConfig, cacheManage
 
             if (!rawIcon && channel.streamInfo?.tvg?.id) {
                 const epgIcon = epgManager.getChannelIcon(channel.streamInfo.tvg.id);
-                const epgIconOk = epgIcon ? await isLogoReachable(epgIcon) : false;
-                if (epgIcon && epgIconOk) {
+                if (epgIcon) {
                     meta.poster = buildPosterUrl(epgIcon, 400, 600, channel.name, baseUrl);
                     meta.background = buildPosterUrl(epgIcon, 1280, 720, channel.name, baseUrl);
                     meta.logo = buildPosterUrl(epgIcon, 600, 400, channel.name, baseUrl);
@@ -476,18 +476,15 @@ async function streamHandler({ id, config: userConfig, cacheManager: cm, epgMana
         }
 
         // Aggiungi i metadati a tutti gli stream
-        // Verifica raggiungibilità logo prima di usarlo (evita errori in bg-image)
-        const rawIconCandidate = channel.poster || channel.logo || channel.background;
-        const rawIconOk = rawIconCandidate ? await isLogoReachable(rawIconCandidate) : false;
-        const rawIcon   = rawIconOk ? (channel.poster || channel.logo) : null;
-        const logoUrl   = rawIconOk ? channel.logo : null;
+        const rawIcon = channel.poster || channel.logo || null;
+        const logoUrl = channel.logo || null;
 
         const meta = {
             id: channel.id,
             type: 'tv',
             name: channel.name,
             poster: buildPosterUrl(rawIcon, 400, 600, channel.name, baseUrl),
-            background: buildPosterUrl(rawIconOk ? (channel.background || channel.logo) : null, 1280, 720, channel.name, baseUrl),
+            background: buildPosterUrl(channel.background || channel.logo || null, 1280, 720, channel.name, baseUrl),
             logo: buildPosterUrl(logoUrl, 600, 400, channel.name, baseUrl),
             description: channel.description || `Channel ID: ${channel.streamInfo?.tvg?.id}`,
             genre: channel.genre,
@@ -502,8 +499,7 @@ async function streamHandler({ id, config: userConfig, cacheManager: cm, epgMana
 
         if (!rawIcon && channel.streamInfo?.tvg?.id) {
             const epgIcon = epgManager.getChannelIcon(channel.streamInfo.tvg.id);
-            const epgIconOk = epgIcon ? await isLogoReachable(epgIcon) : false;
-            if (epgIcon && epgIconOk) {
+            if (epgIcon) {
                 meta.poster = buildPosterUrl(epgIcon, 400, 600, channel.name, baseUrl);
                 meta.background = buildPosterUrl(epgIcon, 1280, 720, channel.name, baseUrl);
                 meta.logo = buildPosterUrl(epgIcon, 600, 400, channel.name, baseUrl);
