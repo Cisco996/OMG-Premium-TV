@@ -530,12 +530,32 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
         res.setHeader('Cache-Control', 'public, max-age=86400');
         res.send(buffer);
     } catch (e) {
-        // Link del logo rotto/irraggiungibile (o bloccato dall'host sorgente):
-        // redirige al text-icon 500x500 invece di restituire un errore.
+        // Link del logo rotto/irraggiungibile:
+        // genera icona testuale 1:1 inline (stessa logica di /text-icon)
         logger.error('_', 'bg-image error, falling back to placeholder:', e.message);
-        const label = encodeURIComponent((channelName || 'LIVE TV').trim());
-        const base = `${req.protocol}://${req.get('host')}`;
-        res.redirect(302, `${base}/text-icon?name=${label}&w=500&h=500`);
+        try {
+            const { Jimp } = require('jimp');
+            const label = (channelName || 'LIVE TV').trim();
+            const W = 500, H = 500, PAD = 35;
+            const font = await Jimp.loadFont(Jimp.FONT_SANS_32_WHITE);
+            const mask = new Jimp({ width: W, height: H, color: 0x00000000 });
+            mask.print(font, PAD, PAD, {
+                text: label,
+                alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER,
+                alignmentY: Jimp.VERTICAL_ALIGN_MIDDLE
+            }, W - PAD * 2, H - PAD * 2);
+            const orangeText = new Jimp({ width: W, height: H, color: '#cc5500' });
+            orangeText.mask(mask, 0, 0);
+            const bg = new Jimp({ width: W, height: H, color: '#1a1a2e' });
+            bg.composite(orangeText, 0, 0);
+            const buffer = await bg.getBuffer('image/png');
+            res.setHeader('Content-Type', 'image/png');
+            res.setHeader('Cache-Control', 'public, max-age=86400');
+            res.send(buffer);
+        } catch (e2) {
+            const label = encodeURIComponent((channelName || 'LIVE TV').trim());
+            res.redirect(302, `/text-icon?name=${label}&w=500&h=500`);
+        }
     }
 });
 
