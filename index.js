@@ -628,12 +628,26 @@ app.get('/logo-image', async (req, res) => {
     try {
         const { Jimp } = require('jimp');
 
-        const logoResponse = await fetch(logoUrl, {
-            headers: { 'User-Agent': config.defaultUserAgent }
-        });
-        if (!logoResponse.ok) throw new Error(`HTTP ${logoResponse.status} for ${logoUrl}`);
-
-        const logoBuffer = Buffer.from(await logoResponse.arrayBuffer());
+        // Timeout 8s per evitare che richieste lente blocchino il thread
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+        let logoBuffer;
+        try {
+            const logoResponse = await fetch(logoUrl, {
+                headers: { 'User-Agent': config.defaultUserAgent },
+                signal: controller.signal
+            });
+            clearTimeout(timeout);
+            if (!logoResponse.ok) throw new Error(`HTTP ${logoResponse.status} for ${logoUrl}`);
+            logoBuffer = Buffer.from(await logoResponse.arrayBuffer());
+        } catch (fetchErr) {
+            clearTimeout(timeout);
+            // Fallback: prova tramite weserv (gestisce redirect e alcuni host problematici)
+            const weservUrl = `https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&w=${Math.round(w*0.6)}&h=${Math.round(h*0.6)}&fit=contain&output=png`;
+            const wr = await fetch(weservUrl, { headers: { 'User-Agent': config.defaultUserAgent } });
+            if (!wr.ok) throw new Error(`weserv fallback failed: ${wr.status}`);
+            logoBuffer = Buffer.from(await wr.arrayBuffer());
+        }
 
         // Verifica magic bytes — evita HTML camuffato da immagine
         const magic = logoBuffer.slice(0, 4).toString('hex');
@@ -680,7 +694,7 @@ app.get('/logo-image', async (req, res) => {
         res.send(outputBuffer);
     } catch (e) {
         logger.error('_', 'logo-image error, falling back to placeholder:', e.message);
-        res.redirect(302, fallbackUrl);
+        if (!res.headersSent) res.redirect(302, fallbackUrl);
     }
 });
 
@@ -710,12 +724,12 @@ app.get('/ph-image', (req, res) => {
 
     let fontSize, lines;
     // Scala fontSize per formato:
-    // portrait 2:3 → 0.144 (20% meno del base 0.18)
-    // landscape 16:9 (background) → 0.10 (testo piccolo, non invade lo schermo)
-    // landscape 3:2 (logo) → 0.18
+    // portrait 2:3 → 0.144
+    // landscape 16:9 (background 1280x720) → 0.10 (testo piccolo su schermo TV)
+    // landscape 3:2 (logo 600x400) → 0.13 (abbastanza piccolo per il word-wrap)
     const isPortrait  = h > w;
     const is169       = !isPortrait && (w / h) > 1.5;
-    const fontSizeScale = isPortrait ? 0.144 : is169 ? 0.10 : 0.18;
+    const fontSizeScale = isPortrait ? 0.144 : is169 ? 0.10 : 0.13;
     for (fontSize = Math.round(Math.min(w, h) * fontSizeScale); fontSize >= 24; fontSize -= 2) {
         const charW    = fontSize * 0.58;
         const maxChars = Math.floor(maxW / charW);
