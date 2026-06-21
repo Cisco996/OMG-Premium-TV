@@ -729,19 +729,21 @@ app.get('/ph-image', (req, res) => {
         return res.send(cached);
     }
 
-    const PAD_X   = Math.round(w * 0.08);
-    const PAD_Y   = Math.round(h * 0.10);
+    const isPortrait = h > w;
+    const is169      = !isPortrait && (w / h) > 1.5;
+    // Padding proporzionale: più generoso per 16:9 così il testo ha più spazio orizzontale
+    const PAD_X   = Math.round(w * (is169 ? 0.06 : 0.08));
+    const PAD_Y   = Math.round(h * (is169 ? 0.12 : 0.10));
     const maxW    = w - PAD_X * 2;
     const maxH    = h - PAD_Y * 2;
     const words   = name.split(' ');
 
     let fontSize, lines;
-    // Scala fontSize per formato:
-    // portrait 2:3 → 0.144
-    // landscape (sia 16:9 background che 3:2 logo) → 0.13 (word-wrap consistente)
-    const isPortrait  = h > w;
-    const fontSizeScale = isPortrait ? 0.144 : 0.13;
-    for (fontSize = Math.round(Math.min(w, h) * fontSizeScale); fontSize >= 24; fontSize -= 2) {
+    // fontSize iniziale: per 16:9 parte basso (h*0.08=57px) così nomi lunghi wrappano subito
+    const startFontSize = isPortrait ? Math.round(Math.min(w, h) * 0.144)
+                        : is169     ? Math.round(h * 0.08)
+                        :             Math.round(Math.min(w, h) * 0.13);
+    for (fontSize = startFontSize; fontSize >= 18; fontSize -= 2) {
         const charW    = fontSize * 0.58;
         const maxChars = Math.floor(maxW / charW);
         const wrapped  = [];
