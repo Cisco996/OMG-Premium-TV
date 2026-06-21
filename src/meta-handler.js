@@ -20,13 +20,13 @@ function buildPosterUrl(imageUrl, shape = 'poster', baseUrl = null, channelName 
     if (!imageUrl) return null;
     const base = 'https://images.weserv.nl/?url=' + encodeURIComponent(imageUrl);
     if (shape === 'landscape') {
-        // 3:2 — contain con sfondo blu #1a1a2e (stesso delle icone testuali, nessuna banda)
-        const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '600x400', baseUrl));
-        return `${base}&w=600&h=400&fit=contain&bg=1a1a2e&default=${fb}`;
+        // 3:2 — contain puro, nessun blur di sfondo: logo visibile interamente
+        const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '600x400'));
+        return `${base}&w=600&h=400&fit=contain&default=${fb}`;
     }
     if (shape === 'square') {
-        const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '400x400', baseUrl));
-        return `${base}&w=400&h=400&fit=contain&bg=1a1a2e&default=${fb}`;
+        const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '400x400'));
+        return `${base}&w=400&h=400&fit=contain&default=${fb}`;
     }
     if (shape === 'background') {
         // Usa endpoint interno se disponibile (logo rimpicciolito centrato);
@@ -34,29 +34,21 @@ function buildPosterUrl(imageUrl, shape = 'poster', baseUrl = null, channelName 
         // col nome se il link del logo è rotto/irraggiungibile.
         if (baseUrl) return `${baseUrl}/bg-image/${encodeURIComponent(imageUrl)}?name=${encodeURIComponent(channelName || '')}`;
         // Fallback weserv se baseUrl non disponibile
-        const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '1280x720', null));
-        return `${base}&w=1280&h=720&fit=contain&bg=1a1a2e&default=${fb}`;
+        const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '1280x720'));
+        return `${base}&w=1280&h=720&fit=contain&bg=blur&default=${fb}`;
     }
-    // default: poster 2:3 — contain con sfondo blu #1a1a2e (stesso delle icone testuali)
-    const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '400x600', baseUrl));
-    return `${base}&w=400&h=600&fit=contain&bg=1a1a2e&default=${fb}`;
+    // default: poster 2:3 — contain puro, nessun blur di sfondo: logo visibile interamente
+    const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '400x600'));
+    return `${base}&w=400&h=600&fit=contain&default=${fb}`;
 }
 
 /**
- * Costruisce un URL placeholder per canali senza logo.
- * Se baseUrl è disponibile, usa l'endpoint interno /text-image che centra il testo
- * perfettamente (risolve il problema del testo in basso su 16:9 in Nuvio e altri client).
- * Altrimenti fallback a placehold.co.
- * Sfondo #1a1a2e, testo arancione #cc5500, font Open Sans.
+ * Costruisce un URL placehold.co per canali senza logo.
+ * Sfondo #1a1a2e, testo arancione #cc5500, font Montserrat — testo ingrandito.
  */
-function buildPlaceholderUrl(channelName, size, baseUrl = null) {
+function buildPlaceholderUrl(channelName, size) {
     const label = (channelName || 'LIVE TV').substring(0, 24).trim();
-    if (baseUrl) {
-        // size formato "WxH" → /text-image/W/H
-        const [w, h] = size.split('x');
-        return `${baseUrl}/text-image/${w}/${h}?name=${encodeURIComponent(label)}`;
-    }
-    const text = encodeURIComponent(label);
+    const text  = encodeURIComponent(label);
     // fontSize=80 → testo grande e leggibile nel carosello Stremio
     return `https://placehold.co/${size}/${PH_BG}/${PH_FG}.png?font=${PH_FONT}&text=${text}&fontSize=80`;
 }
@@ -167,12 +159,11 @@ async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epg
 
         const channelDisplayName = channel.name || 'LIVE TV';
 
-        // Placeholder generati internamente (endpoint /text-image) se baseUrl disponibile,
-        // altrimenti placehold.co — usati solo se nessun logo disponibile
+        // Placeholder placehold.co — pre-calcolati, usati solo se nessun logo disponibile
         const hasLogo      = !!(channel.logo || channel.poster);
-        const phPoster     = hasLogo ? null : buildPlaceholderUrl(channelDisplayName, '400x600',   baseUrl);
-        const phLandscape  = hasLogo ? null : buildPlaceholderUrl(channelDisplayName, '600x400',   baseUrl);
-        const phBackground = hasLogo ? null : buildPlaceholderUrl(channelDisplayName, '1280x720',  baseUrl);
+        const phPoster     = hasLogo ? null : buildPlaceholderUrl(channelDisplayName, '400x600');
+        const phLandscape  = hasLogo ? null : buildPlaceholderUrl(channelDisplayName, '600x400');
+        const phBackground = hasLogo ? null : buildPlaceholderUrl(channelDisplayName, '1280x720');
 
         const meta = {
             id:   channel.id,
