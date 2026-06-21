@@ -514,11 +514,8 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
         // Logo ridimensionato mantenendo le proporzioni
         const logoResized = logo.clone().scaleToFit({ w: LOGO_MAX_W, h: LOGO_MAX_H });
 
-        // Sfondo: logo sfocato, scurito e scalato a coprire il canvas
-        const bg = logo.clone()
-            .cover({ w: CANVAS_W, h: CANVAS_H })
-            .blur(20)
-            .brightness(-0.5);
+        // Sfondo: colore piatto #1a1a2e (blu scuro) — nessun blur
+        const bg = new Jimp({ width: CANVAS_W, height: CANVAS_H, color: 0x1a1a2eff });
 
         // Composizione: sfondo + logo centrato
         const left = Math.round((CANVAS_W - logoResized.bitmap.width)  / 2);
