@@ -23,7 +23,7 @@ function buildPosterUrl(imageUrl, shape = 'poster', baseUrl = null, channelName 
     if (shape === 'landscape') {
         // 3:2 — cover con sfondo blu: riempie il canvas senza zoom eccessivo
         const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '600x400'));
-        return `${base}&w=600&h=400&fit=contain&bg=${BG}&default=${fb}`;
+        return `${base}&w=600&h=400&fit=contain&default=${fb}`;
     }
     if (shape === 'square') {
         const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '400x400'));
