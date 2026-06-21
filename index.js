@@ -607,13 +607,15 @@ app.get('/logo-image', async (req, res) => {
     const w           = Math.min(Math.max(parseInt(req.query.w,  10) || 400, 50), 1920);
     const h           = Math.min(Math.max(parseInt(req.query.h,  10) || 600, 50), 1080);
     const channelName = (req.query.name || 'LIVE TV').trim();
+    // transparent=1 → nessun sfondo (PNG con alpha), usato per logo 3:2 (landscape)
+    const transparent = req.query.transparent === '1';
     const baseUrl     = `${req.protocol}://${req.get('host')}`;
     const fallbackUrl = `${baseUrl}/ph-image?name=${encodeURIComponent(channelName)}&w=${w}&h=${h}`;
 
     if (!rawUrl) return res.redirect(302, fallbackUrl);
 
     const logoUrl  = normalizeImageUrl(rawUrl);
-    const cacheKey = `${w}x${h}:${logoUrl}`;
+    const cacheKey = `${transparent ? 'T' : 'S'}:${w}x${h}:${logoUrl}`;
 
     // Cache hit
     const cached = logoImageCache.get(cacheKey);
@@ -648,19 +650,24 @@ app.get('/logo-image', async (req, res) => {
         const maxLogoH = Math.round(h * 0.60);
         const logoResized = logo.scaleToFit({ w: maxLogoW, h: maxLogoH });
 
-        // Canvas con sfondo scuro #1a1a2e
-        const { intToRGBA, rgbaToInt } = require('jimp');
-        const canvas = new Jimp({ width: w, height: h, color: 0x1a1a2eff });
+        let outputBuffer;
+        if (transparent) {
+            // Nessun sfondo: canvas completamente trasparente, solo il logo centrato
+            const canvas = new Jimp({ width: w, height: h, color: 0x00000000 });
+            const left = Math.round((w - logoResized.bitmap.width)  / 2);
+            const top  = Math.round((h - logoResized.bitmap.height) / 2);
+            canvas.composite(logoResized, left, top);
+            outputBuffer = await canvas.getBuffer('image/png');
+        } else {
+            // Sfondo scuro #1a1a2e, logo centrato
+            const canvas = new Jimp({ width: w, height: h, color: 0x1a1a2eff });
+            const left = Math.round((w - logoResized.bitmap.width)  / 2);
+            const top  = Math.round((h - logoResized.bitmap.height) / 2);
+            canvas.composite(logoResized, left, top);
+            outputBuffer = await canvas.getBuffer('image/png');
+        }
 
-        // Centra il logo sul canvas
-        const left = Math.round((w - logoResized.bitmap.width)  / 2);
-        const top  = Math.round((h - logoResized.bitmap.height) / 2);
-        canvas.composite(logoResized, left, top);
-
-        const buffer = await canvas.getBuffer('image/png');
-
-        logoImageCache.set(cacheKey, { buffer, ts: Date.now() });
-        // Pulizia periodica cache
+        logoImageCache.set(cacheKey, { buffer: outputBuffer, ts: Date.now() });
         if (logoImageCache.size % 200 === 0) {
             const now = Date.now();
             for (const [k, v] of logoImageCache) {
@@ -670,7 +677,7 @@ app.get('/logo-image', async (req, res) => {
 
         res.setHeader('Content-Type', 'image/png');
         res.setHeader('Cache-Control', 'public, max-age=86400');
-        res.send(buffer);
+        res.send(outputBuffer);
     } catch (e) {
         logger.error('_', 'logo-image error, falling back to placeholder:', e.message);
         res.redirect(302, fallbackUrl);
@@ -702,9 +709,13 @@ app.get('/ph-image', (req, res) => {
     const words   = name.split(' ');
 
     let fontSize, lines;
-    // Per formato 2:3 (portrait) riduci il fontSize del 20%
-    const isPortrait = h > w;
-    const fontSizeScale = isPortrait ? 0.144 : 0.18;
+    // Scala fontSize per formato:
+    // portrait 2:3 → 0.144 (20% meno del base 0.18)
+    // landscape 16:9 (background) → 0.10 (testo piccolo, non invade lo schermo)
+    // landscape 3:2 (logo) → 0.18
+    const isPortrait  = h > w;
+    const is169       = !isPortrait && (w / h) > 1.5;
+    const fontSizeScale = isPortrait ? 0.144 : is169 ? 0.10 : 0.18;
     for (fontSize = Math.round(Math.min(w, h) * fontSizeScale); fontSize >= 24; fontSize -= 2) {
         const charW    = fontSize * 0.58;
         const maxChars = Math.floor(maxW / charW);
