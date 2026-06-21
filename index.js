@@ -540,25 +540,30 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
         const LOGO_MAX_W = Math.round(CANVAS_W * 0.25); // 320px — ridotto per non coprire troppo
         const LOGO_MAX_H = Math.round(CANVAS_H * 0.25); // 180px
 
-        // Prova più strategie in ordine per massimizzare compatibilità con host difficili
-        // (Wikimedia, gstatic, GitHub blob ecc.)
+        // Prova più strategie: prima fetch diretto, poi weserv come fallback.
+        // NOTA: weserv risponde 200 con immagine nera/vuota se il logo è irraggiungibile,
+        // quindi NON lo usiamo come prima strategia — altrimenti si vede lo sfondo nero.
         let logoBuffer;
         const fetchStrategies = [
-            // 1. weserv con dimensioni esplicite e output PNG (gestisce SVG, redirect, Wikimedia)
-            () => fetch(`https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&w=512&h=512&fit=inside&output=png`, { headers: { 'User-Agent': config.defaultUserAgent } }),
-            // 2. weserv senza parametri di resize (fallback per URL già rasterizzati)
-            () => fetch(`https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&output=png`, { headers: { 'User-Agent': config.defaultUserAgent } }),
-            // 3. fetch diretto con User-Agent
+            // 1. fetch diretto con User-Agent
             () => fetch(logoUrl, { headers: { 'User-Agent': config.defaultUserAgent } }),
-            // 4. fetch diretto con Referer Wikipedia (sblocca alcuni asset Wikimedia)
+            // 2. fetch diretto con Referer Wikipedia (sblocca alcuni asset Wikimedia)
             () => fetch(logoUrl, { headers: { 'User-Agent': config.defaultUserAgent, 'Referer': 'https://en.wikipedia.org/' } }),
+            // 3. weserv con dimensioni esplicite e output PNG (gestisce SVG, redirect, Wikimedia)
+            () => fetch(`https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&w=512&h=512&fit=inside&output=png`, { headers: { 'User-Agent': config.defaultUserAgent } }),
+            // 4. weserv senza parametri di resize (fallback per URL già rasterizzati)
+            () => fetch(`https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&output=png`, { headers: { 'User-Agent': config.defaultUserAgent } }),
         ];
         let lastErr;
         for (const strategy of fetchStrategies) {
             try {
                 const r = await strategy();
                 if (!r.ok) { lastErr = new Error(`HTTP Status ${r.status} for url ${logoUrl}`); continue; }
-                logoBuffer = Buffer.from(await r.arrayBuffer());
+                const buf = Buffer.from(await r.arrayBuffer());
+                // Scarta buffer troppo piccoli: weserv restituisce immagini nere/vuote
+                // di pochi byte quando il logo originale è irraggiungibile
+                if (buf.length < 500) { lastErr = new Error(`Buffer too small (${buf.length} bytes), likely placeholder`); continue; }
+                logoBuffer = buf;
                 break;
             } catch (e) { lastErr = e; }
         }
@@ -657,21 +662,31 @@ app.get('/logo-image', async (req, res) => {
     try {
         const { Jimp } = require('jimp');
 
-        // Scarica il logo con più strategie in ordine di affidabilità
+        // Scarica il logo: prima fetch diretto, poi weserv come fallback.
+        // NOTA: weserv risponde 200 con immagine nera/vuota se il logo è irraggiungibile,
+        // quindi NON lo usiamo come prima strategia — altrimenti si vede il poster nero.
         let logoBuffer;
         const lw = Math.round(w * 0.6), lh = Math.round(h * 0.6);
         const logoFetchStrategies = [
-            () => fetch(`https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&w=${lw}&h=${lh}&fit=contain&output=png`, { headers: { 'User-Agent': config.defaultUserAgent } }),
-            () => fetch(`https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&output=png`, { headers: { 'User-Agent': config.defaultUserAgent } }),
+            // 1. fetch diretto con User-Agent
             () => fetch(logoUrl, { headers: { 'User-Agent': config.defaultUserAgent } }),
+            // 2. fetch diretto con Referer Wikipedia (sblocca alcuni asset Wikimedia)
             () => fetch(logoUrl, { headers: { 'User-Agent': config.defaultUserAgent, 'Referer': 'https://en.wikipedia.org/' } }),
+            // 3. weserv con dimensioni esplicite (gestisce SVG, redirect)
+            () => fetch(`https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&w=${lw}&h=${lh}&fit=contain&output=png`, { headers: { 'User-Agent': config.defaultUserAgent } }),
+            // 4. weserv senza parametri di resize
+            () => fetch(`https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&output=png`, { headers: { 'User-Agent': config.defaultUserAgent } }),
         ];
         let lastLogoErr;
         for (const strategy of logoFetchStrategies) {
             try {
                 const r = await strategy();
                 if (!r.ok) { lastLogoErr = new Error(`HTTP ${r.status} for ${logoUrl}`); continue; }
-                logoBuffer = Buffer.from(await r.arrayBuffer());
+                const buf = Buffer.from(await r.arrayBuffer());
+                // Scarta buffer troppo piccoli: weserv restituisce immagini nere/placeholder
+                // di pochi byte quando il logo originale è irraggiungibile
+                if (buf.length < 500) { lastLogoErr = new Error(`Buffer too small (${buf.length} bytes), likely placeholder`); continue; }
+                logoBuffer = buf;
                 break;
             } catch (e) { lastLogoErr = e; }
         }
