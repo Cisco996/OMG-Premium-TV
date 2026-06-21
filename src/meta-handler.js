@@ -21,7 +21,7 @@ function buildPosterUrl(imageUrl, shape = 'poster', baseUrl = null, channelName 
     const base = 'https://images.weserv.nl/?url=' + encodeURIComponent(imageUrl);
     const BG = '1a1a2e'; // sfondo blu scuro coerente con placeholder
     if (shape === 'landscape') {
-        // 3:2 — contain con sfondo blu: logo visibile interamente
+        // 3:2 — cover con sfondo blu: riempie il canvas senza zoom eccessivo
         const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '600x400'));
         return `${base}&w=600&h=400&fit=contain&bg=${BG}&default=${fb}`;
     }
@@ -38,9 +38,9 @@ function buildPosterUrl(imageUrl, shape = 'poster', baseUrl = null, channelName 
         const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '1280x720'));
         return `${base}&w=1280&h=720&fit=contain&bg=blur&default=${fb}`;
     }
-    // default: poster 2:3 — contain con sfondo blu, coerente con landscape e icone testuali
+    // default: poster 2:3 — contain puro, sfondo trasparente con barre blu native Stremio
     const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '400x600'));
-    return `${base}&w=400&h=600&fit=contain&bg=${BG}&default=${fb}`;
+    return `${base}&w=400&h=600&fit=contain&default=${fb}`;
 }
 
 /**
