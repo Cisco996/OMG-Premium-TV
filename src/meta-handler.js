@@ -1,6 +1,7 @@
 const config = require('./config');
 const logger = require('./logger');
 const { I18N } = require('../views/views-i18n');
+const { isLogoReachable } = require('./logo-checker');
 
 // ─── Costanti placehold.co (canali senza logo) ───────────────────────────────
 const PH_BG   = '1a1a2e'; // sfondo blu scuro
@@ -18,39 +19,46 @@ const PH_FONT = 'montserrat';
  */
 function buildPosterUrl(imageUrl, shape = 'poster', baseUrl = null, channelName = '') {
     if (!imageUrl) return null;
-    const base = 'https://images.weserv.nl/?url=' + encodeURIComponent(imageUrl);
     if (shape === 'landscape') {
-        // 3:2 — contain puro, nessun blur di sfondo: logo visibile interamente
-        const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '600x400'));
-        return `${base}&w=600&h=400&fit=contain&default=${fb}`;
+        // 3:2 — usa /logo-image interno (cache 24h, logo 60% su sfondo scuro)
+        const fb = buildPlaceholderUrl(channelName, 600, 400, baseUrl);
+        if (baseUrl) return `${baseUrl}/logo-image?url=${encodeURIComponent(imageUrl)}&w=600&h=400&name=${encodeURIComponent(channelName || '')}`;
+        const base = 'https://images.weserv.nl/?url=' + encodeURIComponent(imageUrl);
+        return `${base}&w=360&h=240&fit=contain&cbg=1a1a2e&canvas=600,400&default=${encodeURIComponent(fb)}`;
     }
     if (shape === 'square') {
-        const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '400x400'));
-        return `${base}&w=400&h=400&fit=contain&default=${fb}`;
+        const fb = buildPlaceholderUrl(channelName, 400, 400, baseUrl);
+        if (baseUrl) return `${baseUrl}/logo-image?url=${encodeURIComponent(imageUrl)}&w=400&h=400&name=${encodeURIComponent(channelName || '')}`;
+        const base = 'https://images.weserv.nl/?url=' + encodeURIComponent(imageUrl);
+        return `${base}&w=240&h=240&fit=contain&cbg=1a1a2e&canvas=400,400&default=${encodeURIComponent(fb)}`;
     }
     if (shape === 'background') {
-        // Usa endpoint interno se disponibile (logo rimpicciolito centrato);
-        // passiamo il nome canale così l'endpoint può generare un fallback
-        // col nome se il link del logo è rotto/irraggiungibile.
+        // usa /bg-image interno (logo 40% centrato su sfondo sfocato 1280x720)
         if (baseUrl) return `${baseUrl}/bg-image/${encodeURIComponent(imageUrl)}?name=${encodeURIComponent(channelName || '')}`;
-        // Fallback weserv se baseUrl non disponibile
-        const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '1280x720'));
-        return `${base}&w=1280&h=720&fit=contain&bg=blur&default=${fb}`;
+        const fb = buildPlaceholderUrl(channelName, 1280, 720, baseUrl);
+        const base = 'https://images.weserv.nl/?url=' + encodeURIComponent(imageUrl);
+        return `${base}&w=1280&h=720&fit=contain&bg=blur&default=${encodeURIComponent(fb)}`;
     }
-    // default: poster 2:3 — contain puro, nessun blur di sfondo: logo visibile interamente
-    const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '400x600'));
-    return `${base}&w=400&h=600&fit=contain&default=${fb}`;
+    // default: poster 2:3 — usa /logo-image interno (cache 24h, logo 60% su sfondo scuro)
+    const fb = buildPlaceholderUrl(channelName, 400, 600, baseUrl);
+    if (baseUrl) return `${baseUrl}/logo-image?url=${encodeURIComponent(imageUrl)}&w=400&h=600&name=${encodeURIComponent(channelName || '')}`;
+    const base = 'https://images.weserv.nl/?url=' + encodeURIComponent(imageUrl);
+    return `${base}&w=240&h=360&fit=contain&cbg=1a1a2e&canvas=400,600&default=${encodeURIComponent(fb)}`;
 }
 
 /**
  * Costruisce un URL placehold.co per canali senza logo.
  * Sfondo #1a1a2e, testo arancione #cc5500, font Montserrat — testo ingrandito.
  */
-function buildPlaceholderUrl(channelName, size) {
-    const label = (channelName || 'LIVE TV').substring(0, 24).trim();
-    const text  = encodeURIComponent(label);
-    // fontSize=80 → testo grande e leggibile nel carosello Stremio
-    return `https://placehold.co/${size}/${PH_BG}/${PH_FG}.png?font=${PH_FONT}&text=${text}&fontSize=80`;
+function buildPlaceholderUrl(channelName, w, h, baseUrl = null) {
+    const label = (channelName || 'LIVE TV').substring(0, 40).trim();
+    if (baseUrl) {
+        return `${baseUrl}/ph-image?name=${encodeURIComponent(label)}&w=${w}&h=${h}`;
+    }
+    // Fallback esterno se baseUrl non disponibile
+    const fontSize = Math.min(120, Math.max(60, Math.round(w * 0.12)));
+    const text = encodeURIComponent(label.substring(0, 24));
+    return `https://placehold.co/${w}x${h}/${PH_BG}/${PH_FG}.png?font=${PH_FONT}&text=${text}&fontSize=${fontSize}`;
 }
 
 // ─── i18n ────────────────────────────────────────────────────────────────────
@@ -159,11 +167,17 @@ async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epg
 
         const channelDisplayName = channel.name || 'LIVE TV';
 
-        // Placeholder placehold.co — pre-calcolati, usati solo se nessun logo disponibile
-        const hasLogo      = !!(channel.logo || channel.poster);
-        const phPoster     = hasLogo ? null : buildPlaceholderUrl(channelDisplayName, '400x600');
-        const phLandscape  = hasLogo ? null : buildPlaceholderUrl(channelDisplayName, '600x400');
-        const phBackground = hasLogo ? null : buildPlaceholderUrl(channelDisplayName, '1280x720');
+        // Verifica raggiungibilità logo (evita loghi rotti che causano errori in bg-image)
+        const rawLogoUrl = channel.logo || channel.poster || channel.background;
+        const logoOk     = rawLogoUrl ? await isLogoReachable(rawLogoUrl) : false;
+        const effectivePoster     = logoOk ? (channel.poster || channel.logo) : null;
+        const effectiveBackground = logoOk ? (channel.background || channel.logo) : null;
+        const effectiveLogo       = logoOk ? channel.logo : null;
+
+        // Placeholder sempre pre-calcolati come fallback finale (con /ph-image interno)
+        const phPoster     = buildPlaceholderUrl(channelDisplayName, 400, 600, baseUrl);
+        const phLandscape  = buildPlaceholderUrl(channelDisplayName, 600, 400, baseUrl);
+        const phBackground = buildPlaceholderUrl(channelDisplayName, 1280, 720, baseUrl);
 
         const meta = {
             id:   channel.id,
@@ -171,12 +185,12 @@ async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epg
             name: channel.streamInfo?.tvg?.chno
                 ? `${channel.streamInfo.tvg.chno}. ${channel.name}`
                 : channel.name,
-            // poster  → 2:3, weserv contain+blur
-            poster:      buildPosterUrl(channel.poster || channel.logo, 'poster', null, channelDisplayName)           || phPoster,
+            // poster  → 2:3, logo ridotto al 60% su sfondo scuro con margini
+            poster:      buildPosterUrl(effectivePoster, 'poster', baseUrl, channelDisplayName)           || phPoster,
             // background → endpoint /bg-image: logo 40% centrato su canvas 1280x720 con sfondo sfocato
-            background:  buildPosterUrl(channel.background || channel.logo, 'background', baseUrl, channelDisplayName) || phBackground,
-            // logo → 3:2, weserv contain+blur
-            logo:        buildPosterUrl(channel.logo, 'landscape', null, channelDisplayName)                          || phLandscape,
+            background:  buildPosterUrl(effectiveBackground, 'background', baseUrl, channelDisplayName) || phBackground,
+            // logo → 3:2, logo ridotto al 60% su sfondo scuro con margini
+            logo:        buildPosterUrl(effectiveLogo, 'landscape', baseUrl, channelDisplayName)          || phLandscape,
             description: '',
             releaseInfo: 'LIVE',
             genre:       channel.genre,
@@ -187,13 +201,14 @@ async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epg
             behaviorHints: { isLive: true, defaultVideoId: channel.id }
         };
 
-        // Fallback EPG: se manca qualcosa, prova con l'icona EPG
+        // Fallback EPG: se manca qualcosa, prova con l'icona EPG (solo se raggiungibile)
         if ((!meta.poster || !meta.background || !meta.logo) && channel.streamInfo?.tvg?.id) {
-            const epgIcon = epgManager.getChannelIcon(normalizeId(channel.streamInfo.tvg.id));
-            if (epgIcon) {
-                meta.poster     = meta.poster     || buildPosterUrl(epgIcon, 'poster', null, channelDisplayName);
+            const epgIcon   = epgManager.getChannelIcon(normalizeId(channel.streamInfo.tvg.id));
+            const epgIconOk = epgIcon ? await isLogoReachable(epgIcon) : false;
+            if (epgIcon && epgIconOk) {
+                meta.poster     = meta.poster     || buildPosterUrl(epgIcon, 'poster', baseUrl, channelDisplayName);
                 meta.background = meta.background || buildPosterUrl(epgIcon, 'background', baseUrl, channelDisplayName);
-                meta.logo       = meta.logo       || buildPosterUrl(epgIcon, 'landscape', null, channelDisplayName);
+                meta.logo       = meta.logo       || buildPosterUrl(epgIcon, 'landscape', baseUrl, channelDisplayName);
             }
         }
 
