@@ -510,6 +510,52 @@ function normalizeImageUrl(url) {
     }
 }
 
+// ─── Rilevamento "logo vuoto" ─────────────────────────────────────────────────
+// Molte playlist IPTV (es. varianti tipo "Sky Sport 251/252/...254") puntano
+// tutte allo stesso file logo "segnaposto": un PNG trasparente o un'immagine
+// a tinta unita senza contenuto reale. Questo file supera i controlli di
+// dimensione/formato (è un'immagine valida), ma visivamente è vuoto.
+// Campioniamo i pixel e scartiamo l'immagine se è quasi interamente
+// trasparente oppure a colore uniforme: in questi casi usiamo il
+// placeholder testuale (/ph-image) invece del logo "vuoto".
+function isBlankImage(image) {
+    const { width, height, data } = image.bitmap;
+    const totalPixels = width * height;
+    if (!totalPixels) return true;
+
+    const sampleStep = Math.max(1, Math.floor(totalPixels / 3000)); // max ~3000 campioni
+    let transparentCount = 0, opaqueCount = 0;
+    let sumR = 0, sumG = 0, sumB = 0, sumR2 = 0, sumG2 = 0, sumB2 = 0;
+
+    for (let p = 0; p < totalPixels; p += sampleStep) {
+        const o = p * 4;
+        const a = data[o + 3];
+        if (a < 10) { transparentCount++; continue; }
+        const r = data[o], g = data[o + 1], b = data[o + 2];
+        opaqueCount++;
+        sumR += r; sumG += g; sumB += b;
+        sumR2 += r * r; sumG2 += g * g; sumB2 += b * b;
+    }
+
+    const sampled = transparentCount + opaqueCount;
+    if (!sampled) return true;
+
+    // Quasi interamente trasparente → logo "vuoto"
+    if (transparentCount / sampled > 0.97) return true;
+
+    // Quasi interamente opaco e a tinta praticamente uniforme (varianza colore minima)
+    // → immagine segnaposto a tinta unita, nessun contenuto visivo reale
+    if (opaqueCount / sampled > 0.97) {
+        const meanR = sumR / opaqueCount, meanG = sumG / opaqueCount, meanB = sumB / opaqueCount;
+        const totalVar = (sumR2 / opaqueCount - meanR * meanR)
+                        + (sumG2 / opaqueCount - meanG * meanG)
+                        + (sumB2 / opaqueCount - meanB * meanB);
+        if (totalVar < 6) return true;
+    }
+
+    return false;
+}
+
 // Cache bg-image
 const bgImageCache = new Map();
 const BG_IMAGE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -605,6 +651,12 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
         // quando il logo è irraggiungibile — scarta e usa fallback testo
         if (logo.bitmap.width < 10 || logo.bitmap.height < 10) {
             throw new Error(`Image too small (${logo.bitmap.width}x${logo.bitmap.height}), likely weserv placeholder`);
+        }
+
+        // Logo "vuoto" (trasparente o a tinta unita, es. molte varianti Sky Sport
+        // condividono lo stesso file segnaposto) — scarta e usa fallback testo
+        if (isBlankImage(logo)) {
+            throw new Error(`Logo appears blank/empty for ${logoUrl}`);
         }
 
         // Logo ridimensionato mantenendo le proporzioni (max 25% del canvas)
@@ -742,6 +794,12 @@ app.get('/logo-image', async (req, res) => {
             throw new Error(`Image too small (${logo.bitmap.width}x${logo.bitmap.height}), likely weserv placeholder`);
         }
 
+        // Logo "vuoto" (trasparente o a tinta unita, es. molte varianti Sky Sport
+        // condividono lo stesso file segnaposto) — scarta e usa fallback testo
+        if (isBlankImage(logo)) {
+            throw new Error(`Logo appears blank/empty for ${logoUrl}`);
+        }
+
         // Logo ridotto al 60% del canvas mantenendo le proporzioni
         const maxLogoW = Math.round(w * 0.60);
         const maxLogoH = Math.round(h * 0.60);
@@ -873,12 +931,15 @@ app.get('/ph-image', async (req, res) => {
         const { Jimp, rgbaToInt } = require('jimp');
 
         // Calcola scala font in base alle dimensioni canvas
+        // (denominatore maggiore = testo più piccolo: prima il segnaposto
+        // riempiva quasi tutto il canvas, ora occupa una porzione più
+        // contenuta, simile alla dimensione di un logo reale)
         const minDim = Math.min(w, h);
-        let scale = Math.max(1, Math.floor(minDim / 80));  // es: 400px → scale=5
+        let scale = Math.max(1, Math.floor(minDim / 130));
 
         // Word-wrap: spezza il nome in righe che stanno nel canvas
         const charW = (5 + 1) * scale;
-        const maxChars = Math.floor((w * 0.85) / charW);
+        const maxChars = Math.floor((w * 0.55) / charW);
         const words = name.toUpperCase().split(' ');
         const lines = [];
         let cur = '';
@@ -892,7 +953,7 @@ app.get('/ph-image', async (req, res) => {
         // Ri-aggiusta scala se troppo alto
         const charH = (7 + 2) * scale;
         const totalTextH = lines.length * charH;
-        if (totalTextH > h * 0.8 && scale > 1) scale = Math.max(1, scale - 1);
+        if (totalTextH > h * 0.45 && scale > 1) scale = Math.max(1, scale - 1);
 
         // Disegna
         const canvas = new Jimp({ width: w, height: h, color: 0x1a1a2eff }); // #1a1a2e
