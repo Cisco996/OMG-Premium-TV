@@ -537,8 +537,8 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
 
         const CANVAS_W   = 1280;
         const CANVAS_H   = 720;
-        const LOGO_MAX_W = Math.round(CANVAS_W * 0.40); // 512px
-        const LOGO_MAX_H = Math.round(CANVAS_H * 0.40); // 288px
+        const LOGO_MAX_W = Math.round(CANVAS_W * 0.25); // 320px — ridotto per non coprire troppo
+        const LOGO_MAX_H = Math.round(CANVAS_H * 0.25); // 180px
 
         // Prova più strategie in ordine per massimizzare compatibilità con host difficili
         // (Wikimedia, gstatic, GitHub blob ecc.)
@@ -566,15 +566,29 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
 
         // Verifica che il buffer sia un'immagine riconoscibile prima di passarlo a Jimp
         const magic = logoBuffer.slice(0, 4).toString('hex');
-        const isImage = magic.startsWith('89504e47') || // PNG
-                        magic.startsWith('ffd8ff')   || // JPEG
-                        magic.startsWith('47494638') || // GIF
-                        magic.startsWith('52494646');   // WEBP
-        if (!isImage) {
+        const magicStr = logoBuffer.slice(0, 5).toString('ascii').toLowerCase();
+        const isSvg = magicStr.startsWith('<svg') || magicStr.startsWith('<?xml') || logoBuffer.toString('utf8', 0, 200).toLowerCase().includes('<svg');
+        const isRaster = magic.startsWith('89504e47') || // PNG
+                         magic.startsWith('ffd8ff')   || // JPEG
+                         magic.startsWith('47494638') || // GIF
+                         magic.startsWith('52494646');   // WEBP
+        if (!isRaster && !isSvg) {
             throw new Error(`Not a valid image buffer (magic: ${magic}) for url ${logoUrl}`);
         }
 
-        const logo = await Jimp.read(logoBuffer);
+        // SVG: converti via weserv (Jimp non supporta SVG nativamente)
+        let logoBuffer2 = logoBuffer;
+        if (isSvg) {
+            try {
+                const svgRes = await fetch(`https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&w=512&h=512&fit=inside&output=png`, { headers: { 'User-Agent': config.defaultUserAgent } });
+                if (svgRes.ok) logoBuffer2 = Buffer.from(await svgRes.arrayBuffer());
+                else throw new Error(`weserv SVG convert failed: ${svgRes.status}`);
+            } catch (svgErr) {
+                throw new Error(`SVG conversion failed for ${logoUrl}: ${svgErr.message}`);
+            }
+        }
+
+        const logo = await Jimp.read(logoBuffer2);
 
         // Logo ridimensionato mantenendo le proporzioni (max 40% del canvas)
         const logoResized = logo.clone().scaleToFit({ w: LOGO_MAX_W, h: LOGO_MAX_H });
@@ -665,13 +679,27 @@ app.get('/logo-image', async (req, res) => {
 
         // Verifica magic bytes — evita HTML camuffato da immagine
         const magic = logoBuffer.slice(0, 4).toString('hex');
-        const isImage = magic.startsWith('89504e47') || // PNG
-                        magic.startsWith('ffd8ff')   || // JPEG
-                        magic.startsWith('47494638') || // GIF
-                        magic.startsWith('52494646');   // WEBP
-        if (!isImage) throw new Error(`Not a valid image (magic: ${magic})`);
+        const magicStr = logoBuffer.slice(0, 5).toString('ascii').toLowerCase();
+        const isSvg = magicStr.startsWith('<svg') || magicStr.startsWith('<?xml') || logoBuffer.toString('utf8', 0, 200).toLowerCase().includes('<svg');
+        const isRaster = magic.startsWith('89504e47') || // PNG
+                         magic.startsWith('ffd8ff')   || // JPEG
+                         magic.startsWith('47494638') || // GIF
+                         magic.startsWith('52494646');   // WEBP
+        if (!isRaster && !isSvg) throw new Error(`Not a valid image (magic: ${magic})`);
 
-        const logo = await Jimp.read(logoBuffer);
+        // SVG: converti via weserv (Jimp non supporta SVG nativamente)
+        let logoBuffer2 = logoBuffer;
+        if (isSvg) {
+            try {
+                const svgRes = await fetch(`https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&w=${Math.round(w * 0.6)}&h=${Math.round(h * 0.6)}&fit=inside&output=png`, { headers: { 'User-Agent': config.defaultUserAgent } });
+                if (svgRes.ok) logoBuffer2 = Buffer.from(await svgRes.arrayBuffer());
+                else throw new Error(`weserv SVG convert failed: ${svgRes.status}`);
+            } catch (svgErr) {
+                throw new Error(`SVG conversion failed for ${logoUrl}: ${svgErr.message}`);
+            }
+        }
+
+        const logo = await Jimp.read(logoBuffer2);
 
         // Logo ridotto al 60% del canvas mantenendo le proporzioni
         const maxLogoW = Math.round(w * 0.60);
