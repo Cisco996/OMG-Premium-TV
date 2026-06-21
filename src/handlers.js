@@ -69,16 +69,10 @@ const PH_BG   = '1a1a2e'; // sfondo blu scuro
 const PH_FG   = 'cc5500'; // testo arancione scuro
 const PH_FONT = 'montserrat';
 
-function buildPlaceholderUrl(channelName, size, baseUrl = null) {
-    const label = cleanNameForImage(channelName || 'LIVE TV').substring(0, 40).trim();
-    // size può essere '400x600' oppure w,h separati — normalizziamo
-    const [w, h] = typeof size === 'string' ? size.split('x').map(Number) : [size, size];
-    if (baseUrl) {
-        return `${baseUrl}/ph-image?name=${encodeURIComponent(label)}&w=${w}&h=${h}`;
-    }
-    const fontSize = Math.min(120, Math.max(60, Math.round(w * 0.12)));
-    const text = encodeURIComponent(label.substring(0, 24));
-    return `https://placehold.co/${w}x${h}/${PH_BG}/${PH_FG}.png?font=${PH_FONT}&text=${text}&fontSize=${fontSize}`;
+function buildPlaceholderUrl(channelName, size) {
+    const label = cleanNameForImage(channelName || 'LIVE TV').substring(0, 24).trim();
+    const text  = encodeURIComponent(label);
+    return `https://placehold.co/${size}/${PH_BG}/${PH_FG}.png?font=${PH_FONT}&text=${text}`;
 }
 
 /**
@@ -87,31 +81,14 @@ function buildPlaceholderUrl(channelName, size, baseUrl = null) {
  * (link morti sono molto comuni nelle playlist IPTV — senza questo, weserv
  * mostra un riquadro vuoto invece del placeholder col nome canale).
  */
-function buildPosterUrl(imageUrl, w, h, channelName, baseUrl = null) {
-    const fallback = buildPlaceholderUrl(channelName, `${w}x${h}`, baseUrl);
+function buildPosterUrl(imageUrl, w, h, channelName) {
+    const fallback = buildPlaceholderUrl(channelName, `${w}x${h}`);
     if (!imageUrl) return fallback;
-    const url  = encodeURIComponent(imageUrl);
-    const name = encodeURIComponent(channelName || '');
-    // background 1280x720 → /bg-image (logo+blur su sfondo sfocato)
-    const isBackground = (w === 1280 && h === 720);
-    if (isBackground) {
-        if (baseUrl) return `${baseUrl}/bg-image/${encodeURIComponent(imageUrl)}?name=${name}`;
-        return `https://images.weserv.nl/?url=${url}&w=1280&h=720&fit=contain&cbg=1a1a2e&default=${encodeURIComponent(fallback)}`;
-    }
-    // logo 3:2 (600x400) → trasparente, nessun sfondo
-    const isLandscape = (w > h);
-    if (baseUrl) {
-        const transparent = isLandscape ? '&transparent=1' : '';
-        return `${baseUrl}/logo-image?url=${url}&w=${w}&h=${h}&name=${name}${transparent}`;
-    }
-    // fallback weserv senza baseUrl
-    const logoW = Math.round(w * 0.6);
-    const logoH = Math.round(h * 0.6);
-    const bgParam = isLandscape ? '' : '&cbg=1a1a2e';
-    return `https://images.weserv.nl/?url=${url}&w=${logoW}&h=${logoH}&fit=contain${bgParam}&canvas=${w},${h}&default=${encodeURIComponent(fallback)}`;
+    const defaultParam = encodeURIComponent(fallback);
+    return `https://images.weserv.nl/?url=${encodeURIComponent(imageUrl)}&w=${w}&h=${h}&fit=contain&cbg=1a1a2e&default=${defaultParam}`;
 }
 
-async function catalogHandler({ type, id, extra, config: userConfig, cacheManager: cm, epgManager: em, pythonResolver, pythonRunner, baseUrl }) {
+async function catalogHandler({ type, id, extra, config: userConfig, cacheManager: cm, epgManager: em, pythonResolver, pythonRunner }) {
     const cacheManager = cm || global.CacheManager;
     const epgManager = em || require('./epg-manager');
     try {
@@ -171,19 +148,18 @@ async function catalogHandler({ type, id, extra, config: userConfig, cacheManage
 
         const paginatedChannels = filteredChannels.slice(skip, skip + ITEMS_PER_PAGE);
 
-        const metas = await Promise.all(paginatedChannels.map(async channel => {
+        const metas = paginatedChannels.map(channel => {
             const language = getLanguageFromConfig(userConfig);
             const languageAbbr = language.substring(0, 3).toUpperCase();
-            const rawIcon = channel.poster || channel.logo || null;
-            const logoUrl = channel.logo || null;
+            const rawIcon = channel.poster || channel.logo;
 
             const meta = {
                 id: channel.id,
                 type: 'tv',
                 name: `${channel.name} [${languageAbbr}]`,
-                poster: buildPosterUrl(rawIcon, 400, 600, channel.name, baseUrl),
-                background: buildPosterUrl(channel.background || channel.logo || null, 1280, 720, channel.name, baseUrl),
-                logo: buildPosterUrl(logoUrl, 600, 400, channel.name, baseUrl),
+                poster: buildPosterUrl(rawIcon, 400, 600, channel.name),
+                background: rawIcon ? buildPosterUrl(channel.background || channel.logo, 1280, 720, channel.name) : null,
+                logo: buildPosterUrl(channel.logo, 600, 400, channel.name),
                 description: channel.description || `Channel: ${channel.name} - ID: ${channel.streamInfo?.tvg?.id}`,
                 genre: channel.genre,
                 posterShape: channel.posterShape || 'poster',
@@ -202,14 +178,14 @@ async function catalogHandler({ type, id, extra, config: userConfig, cacheManage
             if (!rawIcon && channel.streamInfo?.tvg?.id) {
                 const epgIcon = epgManager.getChannelIcon(channel.streamInfo.tvg.id);
                 if (epgIcon) {
-                    meta.poster = buildPosterUrl(epgIcon, 400, 600, channel.name, baseUrl);
-                    meta.background = buildPosterUrl(epgIcon, 1280, 720, channel.name, baseUrl);
-                    meta.logo = buildPosterUrl(epgIcon, 600, 400, channel.name, baseUrl);
+                    meta.poster = buildPosterUrl(epgIcon, 400, 600, channel.name);
+                    meta.background = buildPosterUrl(epgIcon, 1280, 720, channel.name);
+                    meta.logo = buildPosterUrl(epgIcon, 600, 400, channel.name);
                 }
             }
 
             return enrichWithEPG(meta, channel.streamInfo?.tvg?.id, userConfig, epgManager);
-        }));
+        });
 
         const SETTINGS_GENRE = '⚙️';
         const settingsLogo = 'https://raw.githubusercontent.com/mccoy88f/OMG-TV-Stremio-Addon/refs/heads/main/tv.png';
@@ -307,7 +283,7 @@ function enrichWithEPG(meta, channelId, userConfig, epgManager) {
 
 const PSEUDO_CHANNEL_IDS = ['rigeneraplaylistpython', 'refreshm3u', 'refreshepg'];
 
-async function streamHandler({ id, config: userConfig, cacheManager: cm, epgManager: em, pythonResolver, pythonRunner, baseUrl }) {
+async function streamHandler({ id, config: userConfig, cacheManager: cm, epgManager: em, pythonResolver, pythonRunner }) {
     const cacheManager = cm || global.CacheManager;
     const epgManager = em || require('./epg-manager');
     const runner = pythonRunner || require('./python-runner');
@@ -476,16 +452,15 @@ async function streamHandler({ id, config: userConfig, cacheManager: cm, epgMana
         }
 
         // Aggiungi i metadati a tutti gli stream
-        const rawIcon = channel.poster || channel.logo || null;
-        const logoUrl = channel.logo || null;
+        const rawIcon = channel.poster || channel.logo;
 
         const meta = {
             id: channel.id,
             type: 'tv',
             name: channel.name,
-            poster: buildPosterUrl(rawIcon, 400, 600, channel.name, baseUrl),
-            background: buildPosterUrl(channel.background || channel.logo || null, 1280, 720, channel.name, baseUrl),
-            logo: buildPosterUrl(logoUrl, 600, 400, channel.name, baseUrl),
+            poster: buildPosterUrl(rawIcon, 400, 600, channel.name),
+            background: rawIcon ? buildPosterUrl(channel.background || channel.logo, 1280, 720, channel.name) : null,
+            logo: buildPosterUrl(channel.logo, 600, 400, channel.name),
             description: channel.description || `Channel ID: ${channel.streamInfo?.tvg?.id}`,
             genre: channel.genre,
             posterShape: channel.posterShape || 'poster',
@@ -500,9 +475,9 @@ async function streamHandler({ id, config: userConfig, cacheManager: cm, epgMana
         if (!rawIcon && channel.streamInfo?.tvg?.id) {
             const epgIcon = epgManager.getChannelIcon(channel.streamInfo.tvg.id);
             if (epgIcon) {
-                meta.poster = buildPosterUrl(epgIcon, 400, 600, channel.name, baseUrl);
-                meta.background = buildPosterUrl(epgIcon, 1280, 720, channel.name, baseUrl);
-                meta.logo = buildPosterUrl(epgIcon, 600, 400, channel.name, baseUrl);
+                meta.poster = buildPosterUrl(epgIcon, 400, 600, channel.name);
+                meta.background = buildPosterUrl(epgIcon, 1280, 720, channel.name);
+                meta.logo = buildPosterUrl(epgIcon, 600, 400, channel.name);
             }
         }
 
