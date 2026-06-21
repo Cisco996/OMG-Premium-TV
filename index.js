@@ -540,16 +540,23 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
         const LOGO_MAX_W = Math.round(CANVAS_W * 0.40); // 512px
         const LOGO_MAX_H = Math.round(CANVAS_H * 0.40); // 288px
 
-        const logoResponse = await fetch(logoUrl, {
-            headers: { 'User-Agent': config.defaultUserAgent }
-        });
-        if (!logoResponse.ok) {
-            throw new Error(`HTTP Status ${logoResponse.status} for url ${logoUrl}`);
+        // Prova weserv prima (accesso privilegiato a Wikimedia, GitHub, gstatic ecc.)
+        let logoBuffer;
+        try {
+            const weservBg = `https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&output=png`;
+            const wr = await fetch(weservBg, { headers: { 'User-Agent': config.defaultUserAgent } });
+            if (!wr.ok) throw new Error(`weserv HTTP ${wr.status}`);
+            logoBuffer = Buffer.from(await wr.arrayBuffer());
+        } catch (weservErr) {
+            // Fallback: fetch diretto
+            const logoResponse = await fetch(logoUrl, {
+                headers: { 'User-Agent': config.defaultUserAgent }
+            });
+            if (!logoResponse.ok) throw new Error(`HTTP Status ${logoResponse.status} for url ${logoUrl}`);
+            logoBuffer = Buffer.from(await logoResponse.arrayBuffer());
         }
-        const logoBuffer = Buffer.from(await logoResponse.arrayBuffer());
 
         // Verifica che il buffer sia un'immagine riconoscibile prima di passarlo a Jimp
-        // (GitHub a volte restituisce HTML con status 200 per URL mal formati)
         const magic = logoBuffer.slice(0, 4).toString('hex');
         const isImage = magic.startsWith('89504e47') || // PNG
                         magic.startsWith('ffd8ff')   || // JPEG
@@ -628,25 +635,31 @@ app.get('/logo-image', async (req, res) => {
     try {
         const { Jimp } = require('jimp');
 
-        // Timeout 8s per evitare che richieste lente blocchino il thread
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 8000);
+        // Scarica il logo: prova weserv prima (ha accesso privilegiato a Wikimedia,
+        // GitHub raw, gstatic e altri CDN che bloccano fetch diretti con 400/403/404).
+        // Se weserv fallisce, ritenta con fetch diretto come fallback.
         let logoBuffer;
+        const weservUrl = `https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&w=${Math.round(w*0.6)}&h=${Math.round(h*0.6)}&fit=contain&output=png`;
         try {
-            const logoResponse = await fetch(logoUrl, {
-                headers: { 'User-Agent': config.defaultUserAgent },
-                signal: controller.signal
-            });
-            clearTimeout(timeout);
-            if (!logoResponse.ok) throw new Error(`HTTP ${logoResponse.status} for ${logoUrl}`);
-            logoBuffer = Buffer.from(await logoResponse.arrayBuffer());
-        } catch (fetchErr) {
-            clearTimeout(timeout);
-            // Fallback: prova tramite weserv (gestisce redirect e alcuni host problematici)
-            const weservUrl = `https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&w=${Math.round(w*0.6)}&h=${Math.round(h*0.6)}&fit=contain&output=png`;
             const wr = await fetch(weservUrl, { headers: { 'User-Agent': config.defaultUserAgent } });
-            if (!wr.ok) throw new Error(`weserv fallback failed: ${wr.status}`);
+            if (!wr.ok) throw new Error(`weserv HTTP ${wr.status}`);
             logoBuffer = Buffer.from(await wr.arrayBuffer());
+        } catch (weservErr) {
+            // Fallback: fetch diretto con timeout 8s
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 8000);
+            try {
+                const logoResponse = await fetch(logoUrl, {
+                    headers: { 'User-Agent': config.defaultUserAgent },
+                    signal: controller.signal
+                });
+                clearTimeout(timeout);
+                if (!logoResponse.ok) throw new Error(`HTTP ${logoResponse.status} for ${logoUrl}`);
+                logoBuffer = Buffer.from(await logoResponse.arrayBuffer());
+            } catch (fetchErr) {
+                clearTimeout(timeout);
+                throw new Error(`Both weserv and direct fetch failed: ${weservErr.message} / ${fetchErr.message}`);
+            }
         }
 
         // Verifica magic bytes — evita HTML camuffato da immagine
@@ -725,11 +738,9 @@ app.get('/ph-image', (req, res) => {
     let fontSize, lines;
     // Scala fontSize per formato:
     // portrait 2:3 → 0.144
-    // landscape 16:9 (background 1280x720) → 0.10 (testo piccolo su schermo TV)
-    // landscape 3:2 (logo 600x400) → 0.13 (abbastanza piccolo per il word-wrap)
+    // landscape (sia 16:9 background che 3:2 logo) → 0.13 (word-wrap consistente)
     const isPortrait  = h > w;
-    const is169       = !isPortrait && (w / h) > 1.5;
-    const fontSizeScale = isPortrait ? 0.144 : is169 ? 0.10 : 0.13;
+    const fontSizeScale = isPortrait ? 0.144 : 0.13;
     for (fontSize = Math.round(Math.min(w, h) * fontSizeScale); fontSize >= 24; fontSize -= 2) {
         const charW    = fontSize * 0.58;
         const maxChars = Math.floor(maxW / charW);
