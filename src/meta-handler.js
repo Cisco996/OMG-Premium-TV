@@ -10,23 +10,24 @@ const PH_FONT = 'montserrat';
 // ─── Helpers immagini ────────────────────────────────────────────────────────
 
 /**
- * Costruisce un URL weserv con fit=contain e sfondo trasparente (nessun blur).
+ * Costruisce un URL weserv con fit=contain e sfondo blu (#1a1a2e) senza blur.
  * shape: 'poster' (2:3) | 'landscape' (3:2) | 'square' (1:1)
- * Per poster e landscape: contain puro senza bg=blur → logo visibile intero, sfondo trasparente.
+ * Per poster, landscape e square: contain con bg=1a1a2e → logo visibile intero, sfondo blu coerente.
  * Per 'background' usa l'endpoint interno /bg-image che rimpicciolisce
  * il logo al 40% su canvas 1280x720 con sfondo sfocato (come tvvoo).
  */
 function buildPosterUrl(imageUrl, shape = 'poster', baseUrl = null, channelName = '') {
     if (!imageUrl) return null;
     const base = 'https://images.weserv.nl/?url=' + encodeURIComponent(imageUrl);
+    const BG = '1a1a2e'; // sfondo blu scuro coerente con placeholder
     if (shape === 'landscape') {
-        // 3:2 — contain puro, nessun blur di sfondo: logo visibile interamente
+        // 3:2 — contain con sfondo blu: logo visibile interamente
         const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '600x400'));
-        return `${base}&w=600&h=400&fit=contain&default=${fb}`;
+        return `${base}&w=600&h=400&fit=contain&bg=${BG}&default=${fb}`;
     }
     if (shape === 'square') {
         const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '400x400'));
-        return `${base}&w=400&h=400&fit=contain&default=${fb}`;
+        return `${base}&w=400&h=400&fit=contain&bg=${BG}&default=${fb}`;
     }
     if (shape === 'background') {
         // Usa endpoint interno se disponibile (logo rimpicciolito centrato);
@@ -37,9 +38,9 @@ function buildPosterUrl(imageUrl, shape = 'poster', baseUrl = null, channelName 
         const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '1280x720'));
         return `${base}&w=1280&h=720&fit=contain&bg=blur&default=${fb}`;
     }
-    // default: poster 2:3 — contain puro, nessun blur di sfondo: logo visibile interamente
+    // default: poster 2:3 — contain con sfondo blu, coerente con landscape e icone testuali
     const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '400x600'));
-    return `${base}&w=400&h=600&fit=contain&default=${fb}`;
+    return `${base}&w=400&h=600&fit=contain&bg=${BG}&default=${fb}`;
 }
 
 /**
@@ -171,11 +172,11 @@ async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epg
             name: channel.streamInfo?.tvg?.chno
                 ? `${channel.streamInfo.tvg.chno}. ${channel.name}`
                 : channel.name,
-            // poster  → 2:3, weserv contain+blur
+            // poster  → 2:3, weserv contain + sfondo blu #1a1a2e
             poster:      buildPosterUrl(channel.poster || channel.logo, 'poster', null, channelDisplayName)           || phPoster,
             // background → endpoint /bg-image: logo 40% centrato su canvas 1280x720 con sfondo sfocato
             background:  buildPosterUrl(channel.background || channel.logo, 'background', baseUrl, channelDisplayName) || phBackground,
-            // logo → 3:2, weserv contain+blur
+            // logo → 3:2, weserv contain + sfondo blu #1a1a2e
             logo:        buildPosterUrl(channel.logo, 'landscape', null, channelDisplayName)                          || phLandscape,
             description: '',
             releaseInfo: 'LIVE',
