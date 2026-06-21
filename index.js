@@ -253,9 +253,10 @@ app.get('/manifest.json', async (req, res) => {
             if (epgToUse) await epgManager.initializeEPG(epgToUse);
         }
 
-        builder.defineCatalogHandler(async (args) => catalogHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner }));
-        builder.defineStreamHandler(async (args) => streamHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner }));
-        builder.defineMetaHandler(async (args) => metaHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` }));
+        const baseUrl = `${req.protocol}://${req.get('host')}`;
+        builder.defineCatalogHandler(async (args) => catalogHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl }));
+        builder.defineStreamHandler(async (args) => streamHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl }));
+        builder.defineMetaHandler(async (args) => metaHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl }));
         res.setHeader('Content-Type', 'application/json');
         res.send(builder.getInterface().manifest);
     } catch (error) {
@@ -346,9 +347,10 @@ app.get('/:config/manifest.json', async (req, res) => {
             if (epgToUse) await epgManager.initializeEPG(epgToUse);
         }
 
-        builder.defineCatalogHandler(async (args) => catalogHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner }));
-        builder.defineStreamHandler(async (args) => streamHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner }));
-        builder.defineMetaHandler(async (args) => metaHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` }));
+        const baseUrl = `${req.protocol}://${req.get('host')}`;
+        builder.defineCatalogHandler(async (args) => catalogHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl }));
+        builder.defineStreamHandler(async (args) => streamHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl }));
+        builder.defineMetaHandler(async (args) => metaHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl }));
 
         res.setHeader('Content-Type', 'application/json');
         res.send(builder.getInterface().manifest);
@@ -484,8 +486,8 @@ app.get('/:resource/:type/:id/:extra?.json', async (req, res, next) => {
     }
 });
 
-// Background image: scarica il logo, lo rimpicciolisce al 40% e lo centra
-// su canvas 1280x720 con sfondo sfocato — evita l'effetto zoom di Stremio.
+// Background image: scarica il logo, lo ridimensiona al 40% e lo centra
+// su canvas 1280x720 trasparente — nessun blur, nessuno sfondo aggiunto.
 // Usa Jimp (puro JS, zero dipendenze native) — funziona su HF senza modifiche al Dockerfile.
 // GET /bg-image/:encodedLogoUrl
 app.get('/bg-image/:encodedUrl', async (req, res) => {
@@ -514,11 +516,8 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
         // Logo ridimensionato mantenendo le proporzioni
         const logoResized = logo.clone().scaleToFit({ w: LOGO_MAX_W, h: LOGO_MAX_H });
 
-        // Sfondo: logo sfocato, scurito e scalato a coprire il canvas
-        const bg = logo.clone()
-            .cover({ w: CANVAS_W, h: CANVAS_H })
-            .blur(20)
-            .brightness(-0.5);
+        // Canvas trasparente 1280x720 con logo centrato (nessuno sfondo aggiunto)
+        const bg = new Jimp({ width: CANVAS_W, height: CANVAS_H, color: 0x00000000 });
 
         // Composizione: sfondo + logo centrato
         const left = Math.round((CANVAS_W - logoResized.bitmap.width)  / 2);
@@ -532,11 +531,54 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
         res.send(buffer);
     } catch (e) {
         // Link del logo rotto/irraggiungibile (o bloccato dall'host sorgente):
-        // redirige al placeholder col nome canale invece di restituire un errore
-        // (che Stremio mostra come riquadro vuoto).
+        // redirige al text-icon 500x500 invece di restituire un errore.
         logger.error('_', 'bg-image error, falling back to placeholder:', e.message);
-        const label = channelName.substring(0, 24).trim();
-        res.redirect(302, `https://placehold.co/1280x720/1a1a2e/cc5500.png?font=montserrat&text=${encodeURIComponent(label)}`);
+        const label = encodeURIComponent((channelName || 'LIVE TV').trim());
+        const base = `${req.protocol}://${req.get('host')}`;
+        res.redirect(302, `${base}/text-icon?name=${label}&w=500&h=500`);
+    }
+});
+
+// Genera icona testuale locale con testo centrato e a capo (canali senza logo)
+// GET /text-icon?name=ChannelName&w=500&h=500
+app.get('/text-icon', async (req, res) => {
+    try {
+        const { Jimp } = require('jimp');
+        const channelName = req.query.name || 'LIVE TV';
+        const label = channelName.trim();
+        const W = parseInt(req.query.w) || 500;
+        const H = parseInt(req.query.h) || 500;
+        const PAD = Math.max(25, Math.round(Math.min(W, H) * 0.07));
+
+        // Sceglie font proporzionale alle dimensioni
+        const fontSize = Math.min(W, H) >= 700 ? Jimp.FONT_SANS_64_WHITE
+            : Math.min(W, H) >= 400 ? Jimp.FONT_SANS_32_WHITE
+            : Jimp.FONT_SANS_16_WHITE;
+        const font = await Jimp.loadFont(fontSize);
+
+        // Maschera: testo bianco su sfondo trasparente
+        const mask = new Jimp({ width: W, height: H, color: 0x00000000 });
+        mask.print(font, PAD, PAD, {
+            text: label,
+            alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER,
+            alignmentY: Jimp.VERTICAL_ALIGN_MIDDLE
+        }, W - PAD * 2, H - PAD * 2);
+
+        // Testo arancione ritagliato dalla maschera
+        const orangeText = new Jimp({ width: W, height: H, color: '#cc5500' });
+        orangeText.mask(mask, 0, 0);
+
+        // Sfondo scuro con testo centrato
+        const bg = new Jimp({ width: W, height: H, color: '#1a1a2e' });
+        bg.composite(orangeText, 0, 0);
+
+        const buffer = await bg.getBuffer('image/png');
+        res.setHeader('Content-Type', 'image/png');
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        res.send(buffer);
+    } catch (e) {
+        const label = (req.query.name || 'LIVE TV').trim();
+        res.redirect(302, `https://placehold.co/${req.query.w || 500}x${req.query.h || 500}/1a1a2e/cc5500.png?font=montserrat&text=${encodeURIComponent(label)}`);
     }
 });
 
