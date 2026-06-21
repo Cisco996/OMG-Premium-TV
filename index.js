@@ -540,21 +540,29 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
         const LOGO_MAX_W = Math.round(CANVAS_W * 0.40); // 512px
         const LOGO_MAX_H = Math.round(CANVAS_H * 0.40); // 288px
 
-        // Prova weserv prima (accesso privilegiato a Wikimedia, GitHub, gstatic ecc.)
+        // Prova più strategie in ordine per massimizzare compatibilità con host difficili
+        // (Wikimedia, gstatic, GitHub blob ecc.)
         let logoBuffer;
-        try {
-            const weservBg = `https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&output=png`;
-            const wr = await fetch(weservBg, { headers: { 'User-Agent': config.defaultUserAgent } });
-            if (!wr.ok) throw new Error(`weserv HTTP ${wr.status}`);
-            logoBuffer = Buffer.from(await wr.arrayBuffer());
-        } catch (weservErr) {
-            // Fallback: fetch diretto
-            const logoResponse = await fetch(logoUrl, {
-                headers: { 'User-Agent': config.defaultUserAgent }
-            });
-            if (!logoResponse.ok) throw new Error(`HTTP Status ${logoResponse.status} for url ${logoUrl}`);
-            logoBuffer = Buffer.from(await logoResponse.arrayBuffer());
+        const fetchStrategies = [
+            // 1. weserv con dimensioni esplicite e output PNG (gestisce SVG, redirect, Wikimedia)
+            () => fetch(`https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&w=512&h=512&fit=inside&output=png`, { headers: { 'User-Agent': config.defaultUserAgent } }),
+            // 2. weserv senza parametri di resize (fallback per URL già rasterizzati)
+            () => fetch(`https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&output=png`, { headers: { 'User-Agent': config.defaultUserAgent } }),
+            // 3. fetch diretto con User-Agent
+            () => fetch(logoUrl, { headers: { 'User-Agent': config.defaultUserAgent } }),
+            // 4. fetch diretto con Referer Wikipedia (sblocca alcuni asset Wikimedia)
+            () => fetch(logoUrl, { headers: { 'User-Agent': config.defaultUserAgent, 'Referer': 'https://en.wikipedia.org/' } }),
+        ];
+        let lastErr;
+        for (const strategy of fetchStrategies) {
+            try {
+                const r = await strategy();
+                if (!r.ok) { lastErr = new Error(`HTTP Status ${r.status} for url ${logoUrl}`); continue; }
+                logoBuffer = Buffer.from(await r.arrayBuffer());
+                break;
+            } catch (e) { lastErr = e; }
         }
+        if (!logoBuffer) throw lastErr || new Error(`All fetch strategies failed for ${logoUrl}`);
 
         // Verifica che il buffer sia un'immagine riconoscibile prima di passarlo a Jimp
         const magic = logoBuffer.slice(0, 4).toString('hex');
@@ -635,32 +643,25 @@ app.get('/logo-image', async (req, res) => {
     try {
         const { Jimp } = require('jimp');
 
-        // Scarica il logo: prova weserv prima (ha accesso privilegiato a Wikimedia,
-        // GitHub raw, gstatic e altri CDN che bloccano fetch diretti con 400/403/404).
-        // Se weserv fallisce, ritenta con fetch diretto come fallback.
+        // Scarica il logo con più strategie in ordine di affidabilità
         let logoBuffer;
-        const weservUrl = `https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&w=${Math.round(w*0.6)}&h=${Math.round(h*0.6)}&fit=contain&output=png`;
-        try {
-            const wr = await fetch(weservUrl, { headers: { 'User-Agent': config.defaultUserAgent } });
-            if (!wr.ok) throw new Error(`weserv HTTP ${wr.status}`);
-            logoBuffer = Buffer.from(await wr.arrayBuffer());
-        } catch (weservErr) {
-            // Fallback: fetch diretto con timeout 8s
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 8000);
+        const lw = Math.round(w * 0.6), lh = Math.round(h * 0.6);
+        const logoFetchStrategies = [
+            () => fetch(`https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&w=${lw}&h=${lh}&fit=contain&output=png`, { headers: { 'User-Agent': config.defaultUserAgent } }),
+            () => fetch(`https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&output=png`, { headers: { 'User-Agent': config.defaultUserAgent } }),
+            () => fetch(logoUrl, { headers: { 'User-Agent': config.defaultUserAgent } }),
+            () => fetch(logoUrl, { headers: { 'User-Agent': config.defaultUserAgent, 'Referer': 'https://en.wikipedia.org/' } }),
+        ];
+        let lastLogoErr;
+        for (const strategy of logoFetchStrategies) {
             try {
-                const logoResponse = await fetch(logoUrl, {
-                    headers: { 'User-Agent': config.defaultUserAgent },
-                    signal: controller.signal
-                });
-                clearTimeout(timeout);
-                if (!logoResponse.ok) throw new Error(`HTTP ${logoResponse.status} for ${logoUrl}`);
-                logoBuffer = Buffer.from(await logoResponse.arrayBuffer());
-            } catch (fetchErr) {
-                clearTimeout(timeout);
-                throw new Error(`Both weserv and direct fetch failed: ${weservErr.message} / ${fetchErr.message}`);
-            }
+                const r = await strategy();
+                if (!r.ok) { lastLogoErr = new Error(`HTTP ${r.status} for ${logoUrl}`); continue; }
+                logoBuffer = Buffer.from(await r.arrayBuffer());
+                break;
+            } catch (e) { lastLogoErr = e; }
         }
+        if (!logoBuffer) throw lastLogoErr || new Error(`All fetch strategies failed for ${logoUrl}`);
 
         // Verifica magic bytes — evita HTML camuffato da immagine
         const magic = logoBuffer.slice(0, 4).toString('hex');
@@ -706,7 +707,7 @@ app.get('/logo-image', async (req, res) => {
         res.setHeader('Cache-Control', 'public, max-age=86400');
         res.send(outputBuffer);
     } catch (e) {
-        logger.error('_', 'logo-image error, falling back to placeholder:', e.message);
+        logger.error('_', `logo-image error for ${logoUrl}, falling back to placeholder:`, e.message);
         if (!res.headersSent) res.redirect(302, fallbackUrl);
     }
 });
