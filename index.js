@@ -510,6 +510,19 @@ function normalizeImageUrl(url) {
     }
 }
 
+// ─── Fetch con timeout ─────────────────────────────────────────────────────
+// Senza timeout, un server di loghi lento o che non risponde mai lascia la
+// richiesta "appesa" a tempo indeterminato: Stremio mostra una tile vuota
+// che non si carica mai (es. Eurosport 1/2, Sky Sport 25x quando il loro
+// host del logo è irraggiungibile/lento). Ogni fetch ha un limite di tempo
+// breve, così si passa rapidamente alla strategia successiva o al fallback.
+const FETCH_TIMEOUT_MS = 3500;
+function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
 // ─── Rilevamento "logo vuoto" ─────────────────────────────────────────────────
 // Molte playlist IPTV (es. varianti tipo "Sky Sport 251/252/...254") puntano
 // tutte allo stesso file logo "segnaposto": un PNG trasparente o un'immagine
@@ -568,6 +581,18 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
     // Fallback interno: /ph-image SVG con nome canale (non dipende da servizi esterni)
     const fallbackUrl = `${baseUrl}/ph-image?name=${encodeURIComponent(channelName)}&w=1280&h=720`;
 
+    // Safety net: se per qualunque motivo l'elaborazione supera questo limite
+    // (host del logo lentissimo, rete bloccata, ecc.) rispondiamo comunque
+    // con il fallback invece di lasciare la richiesta appesa indefinitamente.
+    let responded = false;
+    const globalTimeout = setTimeout(() => {
+        if (!responded && !res.headersSent) {
+            responded = true;
+            res.setHeader('Cache-Control', 'no-store');
+            res.redirect(302, fallbackUrl);
+        }
+    }, 8000);
+
     try {
         const { Jimp } = require('jimp');
         const rawUrl  = decodeURIComponent(req.params.encodedUrl);
@@ -575,6 +600,9 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
 
         // Se l'URL è un SVG, fallback diretto al placeholder testo (Stremio non supporta SVG)
         if (/\.svg(\?.*)?$/i.test(logoUrl)) {
+            clearTimeout(globalTimeout);
+            if (responded) return;
+            responded = true;
             res.setHeader('Cache-Control', 'no-store');
             return res.redirect(302, fallbackUrl);
         }
@@ -582,6 +610,9 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
         // Cache hit
         const cached = bgImageCache.get(logoUrl);
         if (cached && (Date.now() - cached.ts) < BG_IMAGE_CACHE_TTL_MS) {
+            clearTimeout(globalTimeout);
+            if (responded) return;
+            responded = true;
             res.setHeader('Content-Type', 'image/png');
             res.setHeader('Cache-Control', 'public, max-age=86400');
             return res.send(cached.buffer);
@@ -598,16 +629,17 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
         let logoBuffer;
         const fetchStrategies = [
             // 1. fetch diretto con User-Agent
-            () => fetch(logoUrl, { headers: { 'User-Agent': config.defaultUserAgent } }),
+            () => fetchWithTimeout(logoUrl, { headers: { 'User-Agent': config.defaultUserAgent } }),
             // 2. fetch diretto con Referer Wikipedia (sblocca alcuni asset Wikimedia)
-            () => fetch(logoUrl, { headers: { 'User-Agent': config.defaultUserAgent, 'Referer': 'https://en.wikipedia.org/' } }),
+            () => fetchWithTimeout(logoUrl, { headers: { 'User-Agent': config.defaultUserAgent, 'Referer': 'https://en.wikipedia.org/' } }),
             // 3. weserv con dimensioni esplicite e output PNG (gestisce SVG, redirect, Wikimedia)
-            () => fetch(`https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&w=512&h=512&fit=inside&output=png`, { headers: { 'User-Agent': config.defaultUserAgent } }),
+            () => fetchWithTimeout(`https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&w=512&h=512&fit=inside&output=png`, { headers: { 'User-Agent': config.defaultUserAgent } }),
             // 4. weserv senza parametri di resize (fallback per URL già rasterizzati)
-            () => fetch(`https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&output=png`, { headers: { 'User-Agent': config.defaultUserAgent } }),
+            () => fetchWithTimeout(`https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&output=png`, { headers: { 'User-Agent': config.defaultUserAgent } }),
         ];
         let lastErr;
         for (const strategy of fetchStrategies) {
+            if (responded) return; // il timeout globale ha già risposto, inutile continuare
             try {
                 const r = await strategy();
                 if (!r.ok) { lastErr = new Error(`HTTP Status ${r.status} for url ${logoUrl}`); continue; }
@@ -637,7 +669,7 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
         let logoBuffer2 = logoBuffer;
         if (isSvg) {
             try {
-                const svgRes = await fetch(`https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&w=512&h=512&fit=inside&output=png`, { headers: { 'User-Agent': config.defaultUserAgent } });
+                const svgRes = await fetchWithTimeout(`https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&w=512&h=512&fit=inside&output=png`, { headers: { 'User-Agent': config.defaultUserAgent } });
                 if (svgRes.ok) logoBuffer2 = Buffer.from(await svgRes.arrayBuffer());
                 else throw new Error(`weserv SVG convert failed: ${svgRes.status}`);
             } catch (svgErr) {
@@ -683,11 +715,17 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
             }
         }
 
+        clearTimeout(globalTimeout);
+        if (responded) return;
+        responded = true;
         res.setHeader('Content-Type', 'image/png');
         res.setHeader('Cache-Control', 'public, max-age=86400');
         res.send(buffer);
     } catch (e) {
         logger.error('_', 'bg-image error, falling back to placeholder:', e.message);
+        clearTimeout(globalTimeout);
+        if (responded) return;
+        responded = true;
         // Redirect a /ph-image interno — no-store così il client non cacha il fallback
         res.setHeader('Cache-Control', 'no-store');
         res.redirect(302, fallbackUrl);
@@ -731,6 +769,18 @@ app.get('/logo-image', async (req, res) => {
         return res.send(cached.buffer);
     }
 
+    // Safety net: se l'elaborazione supera questo limite (host del logo
+    // lentissimo o irraggiungibile in modo "silenzioso") rispondiamo comunque
+    // con il fallback invece di lasciare la tile vuota indefinitamente.
+    let responded = false;
+    const globalTimeout = setTimeout(() => {
+        if (!responded && !res.headersSent) {
+            responded = true;
+            res.setHeader('Cache-Control', 'no-store');
+            res.redirect(302, fallbackUrl);
+        }
+    }, 8000);
+
     try {
         const { Jimp } = require('jimp');
 
@@ -741,16 +791,17 @@ app.get('/logo-image', async (req, res) => {
         const lw = Math.round(w * 0.6), lh = Math.round(h * 0.6);
         const logoFetchStrategies = [
             // 1. fetch diretto con User-Agent
-            () => fetch(logoUrl, { headers: { 'User-Agent': config.defaultUserAgent } }),
+            () => fetchWithTimeout(logoUrl, { headers: { 'User-Agent': config.defaultUserAgent } }),
             // 2. fetch diretto con Referer Wikipedia (sblocca alcuni asset Wikimedia)
-            () => fetch(logoUrl, { headers: { 'User-Agent': config.defaultUserAgent, 'Referer': 'https://en.wikipedia.org/' } }),
+            () => fetchWithTimeout(logoUrl, { headers: { 'User-Agent': config.defaultUserAgent, 'Referer': 'https://en.wikipedia.org/' } }),
             // 3. weserv con dimensioni esplicite (gestisce SVG, redirect)
-            () => fetch(`https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&w=${lw}&h=${lh}&fit=contain&output=png`, { headers: { 'User-Agent': config.defaultUserAgent } }),
+            () => fetchWithTimeout(`https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&w=${lw}&h=${lh}&fit=contain&output=png`, { headers: { 'User-Agent': config.defaultUserAgent } }),
             // 4. weserv senza parametri di resize
-            () => fetch(`https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&output=png`, { headers: { 'User-Agent': config.defaultUserAgent } }),
+            () => fetchWithTimeout(`https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&output=png`, { headers: { 'User-Agent': config.defaultUserAgent } }),
         ];
         let lastLogoErr;
         for (const strategy of logoFetchStrategies) {
+            if (responded) return; // il timeout globale ha già risposto, inutile continuare
             try {
                 const r = await strategy();
                 if (!r.ok) { lastLogoErr = new Error(`HTTP ${r.status} for ${logoUrl}`); continue; }
@@ -778,7 +829,7 @@ app.get('/logo-image', async (req, res) => {
         let logoBuffer2 = logoBuffer;
         if (isSvg) {
             try {
-                const svgRes = await fetch(`https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&w=${Math.round(w * 0.6)}&h=${Math.round(h * 0.6)}&fit=inside&output=png`, { headers: { 'User-Agent': config.defaultUserAgent } });
+                const svgRes = await fetchWithTimeout(`https://images.weserv.nl/?url=${encodeURIComponent(logoUrl)}&w=${Math.round(w * 0.6)}&h=${Math.round(h * 0.6)}&fit=inside&output=png`, { headers: { 'User-Agent': config.defaultUserAgent } });
                 if (svgRes.ok) logoBuffer2 = Buffer.from(await svgRes.arrayBuffer());
                 else throw new Error(`weserv SVG convert failed: ${svgRes.status}`);
             } catch (svgErr) {
@@ -830,11 +881,17 @@ app.get('/logo-image', async (req, res) => {
             }
         }
 
+        clearTimeout(globalTimeout);
+        if (responded) return;
+        responded = true;
         res.setHeader('Content-Type', 'image/png');
         res.setHeader('Cache-Control', 'public, max-age=86400');
         res.send(outputBuffer);
     } catch (e) {
         logger.error('_', `logo-image error for ${logoUrl}, falling back to placeholder:`, e.message);
+        clearTimeout(globalTimeout);
+        if (responded) return;
+        responded = true;
         if (!res.headersSent) { res.setHeader('Cache-Control', 'no-store'); res.redirect(302, fallbackUrl); }
     }
 });
