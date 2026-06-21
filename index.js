@@ -253,10 +253,9 @@ app.get('/manifest.json', async (req, res) => {
             if (epgToUse) await epgManager.initializeEPG(epgToUse);
         }
 
-        const baseUrl = `${req.protocol}://${req.get('host')}`;
-        builder.defineCatalogHandler(async (args) => catalogHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl }));
-        builder.defineStreamHandler(async (args) => streamHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl }));
-        builder.defineMetaHandler(async (args) => metaHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl }));
+        builder.defineCatalogHandler(async (args) => catalogHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner }));
+        builder.defineStreamHandler(async (args) => streamHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner }));
+        builder.defineMetaHandler(async (args) => metaHandler({ ...args, config: req.query, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` }));
         res.setHeader('Content-Type', 'application/json');
         res.send(builder.getInterface().manifest);
     } catch (error) {
@@ -347,10 +346,9 @@ app.get('/:config/manifest.json', async (req, res) => {
             if (epgToUse) await epgManager.initializeEPG(epgToUse);
         }
 
-        const baseUrl = `${req.protocol}://${req.get('host')}`;
-        builder.defineCatalogHandler(async (args) => catalogHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl }));
-        builder.defineStreamHandler(async (args) => streamHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl }));
-        builder.defineMetaHandler(async (args) => metaHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl }));
+        builder.defineCatalogHandler(async (args) => catalogHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner }));
+        builder.defineStreamHandler(async (args) => streamHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner }));
+        builder.defineMetaHandler(async (args) => metaHandler({ ...args, config: decodedConfig, cacheManager, epgManager, pythonResolver, pythonRunner, baseUrl: `${req.protocol}://${req.get('host')}` }));
 
         res.setHeader('Content-Type', 'application/json');
         res.send(builder.getInterface().manifest);
@@ -486,8 +484,68 @@ app.get('/:resource/:type/:id/:extra?.json', async (req, res, next) => {
     }
 });
 
-// Background image: scarica il logo, lo ridimensiona al 40% e lo centra
-// su canvas 1280x720 trasparente — nessun blur, nessuno sfondo aggiunto.
+// Placeholder testuale generato internamente: sfondo blu #1a1a2e, testo arancione #cc5500,
+// testo centrato perfettamente (orizzontalmente e verticalmente) su qualsiasi dimensione.
+// Risolve il problema di placehold.co che su 16:9 mostra il testo in basso su alcuni client.
+// GET /text-image/:w/:h?name=NomeCanale
+app.get('/text-image/:w/:h', async (req, res) => {
+    const W    = parseInt(req.params.w,  10) || 1280;
+    const H    = parseInt(req.params.h,  10) || 720;
+    const name = (req.query.name || 'LIVE TV').substring(0, 24).trim();
+    try {
+        const { loadFont, measureText, measureTextHeight, Jimp, JimpMime } = require('jimp');
+        const path = require('path');
+
+        // Font size proporzionale all'immagine — scegliamo il più grande che non supera H/6
+        const targetH = Math.round(H / 6);
+        // Font disponibili (white): 8, 16, 32, 64, 128
+        let fontSize = 64;
+        if (targetH < 20) fontSize = 16;
+        else if (targetH < 40) fontSize = 32;
+        else if (targetH < 75) fontSize = 64;
+        else fontSize = 128;
+
+        const fontPath = path.join(
+            __dirname,
+            `node_modules/@jimp/plugin-print/dist/fonts/open-sans/open-sans-${fontSize}-white/open-sans-${fontSize}-white.fnt`
+        );
+        const font = await loadFont(fontPath);
+
+        // Misura il testo per centrarlo
+        const textW = measureText(font, name);
+        const textH = measureTextHeight(font, name, W);
+        const x = Math.max(0, Math.round((W - textW)  / 2));
+        const y = Math.max(0, Math.round((H - textH)  / 2));
+
+        // Sfondo blu scuro uniforme
+        const img = new Jimp({ width: W, height: H, color: 0x1a1a2eff });
+        img.print({ font, x, y, text: name });
+
+        // Tint arancione #cc5500: i pixel bianchi (testo) diventano arancioni
+        img.scan(0, 0, W, H, function(px, py, idx) {
+            const r = this.bitmap.data[idx + 0];
+            const g = this.bitmap.data[idx + 1];
+            const b = this.bitmap.data[idx + 2];
+            const a = this.bitmap.data[idx + 3];
+            if (a > 0 && r > 200 && g > 200 && b > 200) {
+                this.bitmap.data[idx + 0] = 204; // R → #cc
+                this.bitmap.data[idx + 1] = 85;  // G → #55
+                this.bitmap.data[idx + 2] = 0;   // B → #00
+            }
+        });
+
+        const buffer = await img.getBuffer(JimpMime.png);
+        res.setHeader('Content-Type', 'image/png');
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        res.send(buffer);
+    } catch (e) {
+        logger.error('_', 'text-image error, falling back to placehold.co:', e.message);
+        res.redirect(302, `https://placehold.co/${W}x${H}/1a1a2e/cc5500.png?font=montserrat&text=${encodeURIComponent(name)}&fontSize=80`);
+    }
+});
+
+// Background image: scarica il logo, lo rimpicciolisce al 40% e lo centra
+// su canvas 1280x720 con sfondo sfocato — evita l'effetto zoom di Stremio.
 // Usa Jimp (puro JS, zero dipendenze native) — funziona su HF senza modifiche al Dockerfile.
 // GET /bg-image/:encodedLogoUrl
 app.get('/bg-image/:encodedUrl', async (req, res) => {
@@ -516,8 +574,11 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
         // Logo ridimensionato mantenendo le proporzioni
         const logoResized = logo.clone().scaleToFit({ w: LOGO_MAX_W, h: LOGO_MAX_H });
 
-        // Canvas trasparente 1280x720 con logo centrato (nessuno sfondo aggiunto)
-        const bg = new Jimp({ width: CANVAS_W, height: CANVAS_H, color: 0x00000000 });
+        // Sfondo: logo sfocato, scurito e scalato a coprire il canvas
+        const bg = logo.clone()
+            .cover({ w: CANVAS_W, h: CANVAS_H })
+            .blur(20)
+            .brightness(-0.5);
 
         // Composizione: sfondo + logo centrato
         const left = Math.round((CANVAS_W - logoResized.bitmap.width)  / 2);
@@ -530,75 +591,13 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
         res.setHeader('Cache-Control', 'public, max-age=86400');
         res.send(buffer);
     } catch (e) {
-        // Link del logo rotto/irraggiungibile:
-        // genera icona testuale 1:1 inline (stessa logica di /text-icon)
-        logger.error('_', 'bg-image error, falling back to placeholder:', e.message);
-        try {
-            const { Jimp } = require('jimp');
-            const label = (channelName || 'LIVE TV').trim();
-            const W = 500, H = 500, PAD = 35;
-            const font = await Jimp.loadFont(Jimp.FONT_SANS_32_WHITE);
-            const mask = new Jimp({ width: W, height: H, color: 0x00000000 });
-            mask.print(font, PAD, PAD, {
-                text: label,
-                alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER,
-                alignmentY: Jimp.VERTICAL_ALIGN_MIDDLE
-            }, W - PAD * 2, H - PAD * 2);
-            const orangeText = new Jimp({ width: W, height: H, color: '#cc5500' });
-            orangeText.mask(mask, 0, 0);
-            const bg = new Jimp({ width: W, height: H, color: '#1a1a2e' });
-            bg.composite(orangeText, 0, 0);
-            const buffer = await bg.getBuffer('image/png');
-            res.setHeader('Content-Type', 'image/png');
-            res.setHeader('Cache-Control', 'public, max-age=86400');
-            res.send(buffer);
-        } catch (e2) {
-            const label = encodeURIComponent((channelName || 'LIVE TV').trim());
-            res.redirect(302, `/text-icon?name=${label}&w=500&h=500`);
-        }
-    }
-});
-
-// Genera icona testuale locale con testo centrato e a capo (canali senza logo)
-// GET /text-icon?name=ChannelName&w=500&h=500
-app.get('/text-icon', async (req, res) => {
-    try {
-        const { Jimp } = require('jimp');
-        const channelName = req.query.name || 'LIVE TV';
-        const label = channelName.trim();
-        const W = parseInt(req.query.w) || 500;
-        const H = parseInt(req.query.h) || 500;
-        const PAD = Math.max(25, Math.round(Math.min(W, H) * 0.07));
-
-        // Sceglie font proporzionale alle dimensioni
-        const fontSize = Math.min(W, H) >= 700 ? Jimp.FONT_SANS_64_WHITE
-            : Math.min(W, H) >= 400 ? Jimp.FONT_SANS_32_WHITE
-            : Jimp.FONT_SANS_16_WHITE;
-        const font = await Jimp.loadFont(fontSize);
-
-        // Maschera: testo bianco su sfondo trasparente
-        const mask = new Jimp({ width: W, height: H, color: 0x00000000 });
-        mask.print(font, PAD, PAD, {
-            text: label,
-            alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER,
-            alignmentY: Jimp.VERTICAL_ALIGN_MIDDLE
-        }, W - PAD * 2, H - PAD * 2);
-
-        // Testo arancione ritagliato dalla maschera
-        const orangeText = new Jimp({ width: W, height: H, color: '#cc5500' });
-        orangeText.mask(mask, 0, 0);
-
-        // Sfondo scuro con testo centrato
-        const bg = new Jimp({ width: W, height: H, color: '#1a1a2e' });
-        bg.composite(orangeText, 0, 0);
-
-        const buffer = await bg.getBuffer('image/png');
-        res.setHeader('Content-Type', 'image/png');
-        res.setHeader('Cache-Control', 'public, max-age=86400');
-        res.send(buffer);
-    } catch (e) {
-        const label = (req.query.name || 'LIVE TV').trim();
-        res.redirect(302, `https://placehold.co/${req.query.w || 500}x${req.query.h || 500}/1a1a2e/cc5500.png?font=montserrat&text=${encodeURIComponent(label)}`);
+        // Link del logo rotto/irraggiungibile (o bloccato dall'host sorgente):
+        // redirige al placeholder col nome canale invece di restituire un errore
+        // (che Stremio mostra come riquadro vuoto).
+        logger.error('_', 'bg-image error, falling back to text-image:', e.message);
+        const label = channelName.substring(0, 24).trim();
+        // Usa l'endpoint interno /text-image che centra il testo perfettamente (no placehold.co)
+        res.redirect(302, `/text-image/1280/720?name=${encodeURIComponent(label)}`);
     }
 });
 
