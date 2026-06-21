@@ -562,7 +562,7 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
                 const buf = Buffer.from(await r.arrayBuffer());
                 // Scarta buffer troppo piccoli: weserv restituisce immagini nere/vuote
                 // di pochi byte quando il logo originale è irraggiungibile
-                if (buf.length < 500) { lastErr = new Error(`Buffer too small (${buf.length} bytes), likely placeholder`); continue; }
+                if (buf.length < 2000) { lastErr = new Error(`Buffer too small (${buf.length} bytes), likely placeholder`); continue; }
                 logoBuffer = buf;
                 break;
             } catch (e) { lastErr = e; }
@@ -595,7 +595,13 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
 
         const logo = await Jimp.read(logoBuffer2);
 
-        // Logo ridimensionato mantenendo le proporzioni (max 40% del canvas)
+        // Verifica dimensioni reali: weserv restituisce immagini 1x1 o simili
+        // quando il logo è irraggiungibile — scarta e usa fallback testo
+        if (logo.bitmap.width < 10 || logo.bitmap.height < 10) {
+            throw new Error(`Image too small (${logo.bitmap.width}x${logo.bitmap.height}), likely weserv placeholder`);
+        }
+
+        // Logo ridimensionato mantenendo le proporzioni (max 25% del canvas)
         const logoResized = logo.clone().scaleToFit({ w: LOGO_MAX_W, h: LOGO_MAX_H });
 
         // Sfondo: logo sfocato, scurito e scalato a coprire il canvas
@@ -685,7 +691,7 @@ app.get('/logo-image', async (req, res) => {
                 const buf = Buffer.from(await r.arrayBuffer());
                 // Scarta buffer troppo piccoli: weserv restituisce immagini nere/placeholder
                 // di pochi byte quando il logo originale è irraggiungibile
-                if (buf.length < 500) { lastLogoErr = new Error(`Buffer too small (${buf.length} bytes), likely placeholder`); continue; }
+                if (buf.length < 2000) { lastLogoErr = new Error(`Buffer too small (${buf.length} bytes), likely placeholder`); continue; }
                 logoBuffer = buf;
                 break;
             } catch (e) { lastLogoErr = e; }
@@ -715,6 +721,12 @@ app.get('/logo-image', async (req, res) => {
         }
 
         const logo = await Jimp.read(logoBuffer2);
+
+        // Verifica dimensioni reali: weserv restituisce immagini 1x1 o simili
+        // quando il logo è irraggiungibile — scarta e usa fallback testo
+        if (logo.bitmap.width < 10 || logo.bitmap.height < 10) {
+            throw new Error(`Image too small (${logo.bitmap.width}x${logo.bitmap.height}), likely weserv placeholder`);
+        }
 
         // Logo ridotto al 60% del canvas mantenendo le proporzioni
         const maxLogoW = Math.round(w * 0.60);
