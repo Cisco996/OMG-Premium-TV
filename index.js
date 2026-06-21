@@ -532,8 +532,22 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
         // redirige al placeholder col nome canale invece di restituire un errore
         // (che Stremio mostra come riquadro vuoto).
         logger.error('_', 'bg-image error, falling back to placeholder:', e.message);
-        const label = channelName.substring(0, 24).trim();
-        res.redirect(302, `https://placehold.co/1280x720/1a1a2e/cc5500.png?font=montserrat&text=${encodeURIComponent(label)}`);
+        const label = (channelName || 'LIVE TV').trim();
+        const maxChars = 8;
+        const words = label.split(' ');
+        const lines = [];
+        let currentLine = '';
+        for (const word of words) {
+            if (currentLine.length + word.length + 1 <= maxChars) {
+                currentLine += (currentLine ? ' ' : '') + word;
+            } else {
+                if (currentLine) lines.push(currentLine);
+                currentLine = word;
+            }
+        }
+        if (currentLine) lines.push(currentLine);
+        const text = lines.map(l => encodeURIComponent(l)).join('%0A');
+        res.redirect(302, `https://placehold.co/1280x720/1a1a2e/cc5500.png?font=montserrat&text=${text}&fontSize=160`);
     }
 });
 

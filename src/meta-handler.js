@@ -10,6 +10,26 @@ const PH_FONT = 'montserrat';
 // ─── Helpers immagini ────────────────────────────────────────────────────────
 
 /**
+ * Spezza il testo in più righe rispettando la larghezza massima per riga.
+ * Mantiene le parole intere e usa %0A come separatore di riga per placehold.co.
+ */
+function wrapTextForPlaceholder(text, maxCharsPerLine) {
+    const words = text.split(' ');
+    const lines = [];
+    let currentLine = '';
+    for (const word of words) {
+        if (currentLine.length + word.length + 1 <= maxCharsPerLine) {
+            currentLine += (currentLine ? ' ' : '') + word;
+        } else {
+            if (currentLine) lines.push(currentLine);
+            currentLine = word;
+        }
+    }
+    if (currentLine) lines.push(currentLine);
+    return lines;
+}
+
+/**
  * Costruisce un URL weserv con fit=contain e sfondo blu (#1a1a2e) senza blur.
  * shape: 'poster' (2:3) | 'landscape' (3:2) | 'square' (1:1)
  * Per poster, landscape e square: contain con bg=1a1a2e → logo visibile intero, sfondo blu coerente.
@@ -46,12 +66,15 @@ function buildPosterUrl(imageUrl, shape = 'poster', baseUrl = null, channelName 
 /**
  * Costruisce un URL placehold.co per canali senza logo.
  * Sfondo #1a1a2e, testo arancione #cc5500, font Montserrat — testo ingrandito.
+ * Supporta testo su più righe centrato per nomi lunghi.
  */
 function buildPlaceholderUrl(channelName, size) {
-    const label = (channelName || 'LIVE TV').substring(0, 24).trim();
-    const text  = encodeURIComponent(label);
-    // fontSize=80 → testo grande e leggibile nel carosello Stremio
-    return `https://placehold.co/${size}/${PH_BG}/${PH_FG}.png?font=${PH_FONT}&text=${text}&fontSize=80`;
+    const label = (channelName || 'LIVE TV').trim();
+    const [w] = size.split('x').map(Number);
+    const maxChars = 8;
+    const lines = wrapTextForPlaceholder(label, maxChars);
+    const text = lines.map(l => encodeURIComponent(l)).join('%0A');
+    return `https://placehold.co/${size}/${PH_BG}/${PH_FG}.png?font=${PH_FONT}&text=${text}&fontSize=160`;
 }
 
 // ─── i18n ────────────────────────────────────────────────────────────────────

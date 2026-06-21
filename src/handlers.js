@@ -47,21 +47,27 @@ function cleanNameForImage(name) {
         cleaned = parts[0].trim();
     }
 
-    // Se ancora troppo lungo, tronchiamo preservando parole intere
-    if (cleaned.length > 30) {
-        let words = cleaned.split(' ');
-        let result = '';
-        for (let word of words) {
-            if ((result + ' ' + word).length <= 27) {
-                result += (result ? ' ' : '') + word;
-            } else {
-                break;
-            }
-        }
-        cleaned = result + '...';
-    }
-
     return cleaned || 'No Name';
+}
+
+/**
+ * Spezza il testo in più righe rispettando la larghezza massima per riga.
+ * Mantiene le parole intere e usa %0A come separatore di riga per placehold.co.
+ */
+function wrapTextForPlaceholder(text, maxCharsPerLine) {
+    const words = text.split(' ');
+    const lines = [];
+    let currentLine = '';
+    for (const word of words) {
+        if (currentLine.length + word.length + 1 <= maxCharsPerLine) {
+            currentLine += (currentLine ? ' ' : '') + word;
+        } else {
+            if (currentLine) lines.push(currentLine);
+            currentLine = word;
+        }
+    }
+    if (currentLine) lines.push(currentLine);
+    return lines;
 }
 
 // ─── Placeholder placehold.co (canali senza logo) — stessa identità visiva di meta-handler.js ──
@@ -70,9 +76,12 @@ const PH_FG   = 'cc5500'; // testo arancione scuro
 const PH_FONT = 'montserrat';
 
 function buildPlaceholderUrl(channelName, size) {
-    const label = cleanNameForImage(channelName || 'LIVE TV').substring(0, 24).trim();
-    const text  = encodeURIComponent(label);
-    return `https://placehold.co/${size}/${PH_BG}/${PH_FG}.png?font=${PH_FONT}&text=${text}`;
+    const label = cleanNameForImage(channelName || 'LIVE TV').trim();
+    const [w] = size.split('x').map(Number);
+    const maxChars = 8;
+    const lines = wrapTextForPlaceholder(label, maxChars);
+    const text = lines.map(l => encodeURIComponent(l)).join('%0A');
+    return `https://placehold.co/${size}/${PH_BG}/${PH_FG}.png?font=${PH_FONT}&text=${text}&fontSize=160`;
 }
 
 /**
