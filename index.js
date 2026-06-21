@@ -782,77 +782,147 @@ app.get('/logo-image', async (req, res) => {
 });
 
 // GET /ph-image?name=NOME&w=400&h=600
-// Genera un SVG con sfondo scuro, testo arancione centrato e word-wrap automatico.
-// Usato al posto di placehold.co per i canali senza logo — testo sempre leggibile
-// su TV indipendentemente dal formato (poster, landscape, background).
-// GET /ph-image?name=NOME&w=400&h=600
-// Genera un SVG con sfondo scuro, testo arancione centrato e word-wrap automatico.
-// Usato al posto di placehold.co per i canali senza logo — testo sempre leggibile
-// su TV indipendentemente dal formato (poster, landscape, background).
+// Genera un PNG con sfondo #1a1a2e e testo arancione #cc5500 via Jimp.
+// Font bitmap 5x7 codificata inline — nessuna dipendenza extra, funziona con Stremio.
 const phImageCache = new Map();
-app.get('/ph-image', (req, res) => {
+const PH_IMAGE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+// Font bitmap 5x7: ogni carattere = array di 7 righe, ogni riga = 5 bit (MSB a sinistra)
+const FONT5X7 = {
+  ' ':  [0b00000,0b00000,0b00000,0b00000,0b00000,0b00000,0b00000],
+  'A':  [0b01110,0b10001,0b10001,0b11111,0b10001,0b10001,0b10001],
+  'B':  [0b11110,0b10001,0b10001,0b11110,0b10001,0b10001,0b11110],
+  'C':  [0b01110,0b10001,0b10000,0b10000,0b10000,0b10001,0b01110],
+  'D':  [0b11110,0b10001,0b10001,0b10001,0b10001,0b10001,0b11110],
+  'E':  [0b11111,0b10000,0b10000,0b11110,0b10000,0b10000,0b11111],
+  'F':  [0b11111,0b10000,0b10000,0b11110,0b10000,0b10000,0b10000],
+  'G':  [0b01110,0b10001,0b10000,0b10111,0b10001,0b10001,0b01111],
+  'H':  [0b10001,0b10001,0b10001,0b11111,0b10001,0b10001,0b10001],
+  'I':  [0b11111,0b00100,0b00100,0b00100,0b00100,0b00100,0b11111],
+  'J':  [0b11111,0b00010,0b00010,0b00010,0b00010,0b10010,0b01100],
+  'K':  [0b10001,0b10010,0b10100,0b11000,0b10100,0b10010,0b10001],
+  'L':  [0b10000,0b10000,0b10000,0b10000,0b10000,0b10000,0b11111],
+  'M':  [0b10001,0b11011,0b10101,0b10101,0b10001,0b10001,0b10001],
+  'N':  [0b10001,0b11001,0b10101,0b10011,0b10001,0b10001,0b10001],
+  'O':  [0b01110,0b10001,0b10001,0b10001,0b10001,0b10001,0b01110],
+  'P':  [0b11110,0b10001,0b10001,0b11110,0b10000,0b10000,0b10000],
+  'Q':  [0b01110,0b10001,0b10001,0b10001,0b10101,0b10010,0b01101],
+  'R':  [0b11110,0b10001,0b10001,0b11110,0b10100,0b10010,0b10001],
+  'S':  [0b01111,0b10000,0b10000,0b01110,0b00001,0b00001,0b11110],
+  'T':  [0b11111,0b00100,0b00100,0b00100,0b00100,0b00100,0b00100],
+  'U':  [0b10001,0b10001,0b10001,0b10001,0b10001,0b10001,0b01110],
+  'V':  [0b10001,0b10001,0b10001,0b10001,0b01010,0b01010,0b00100],
+  'W':  [0b10001,0b10001,0b10001,0b10101,0b10101,0b11011,0b10001],
+  'X':  [0b10001,0b10001,0b01010,0b00100,0b01010,0b10001,0b10001],
+  'Y':  [0b10001,0b10001,0b01010,0b00100,0b00100,0b00100,0b00100],
+  'Z':  [0b11111,0b00001,0b00010,0b00100,0b01000,0b10000,0b11111],
+  '0':  [0b01110,0b10001,0b10011,0b10101,0b11001,0b10001,0b01110],
+  '1':  [0b00100,0b01100,0b00100,0b00100,0b00100,0b00100,0b11111],
+  '2':  [0b01110,0b10001,0b00001,0b00110,0b01000,0b10000,0b11111],
+  '3':  [0b11111,0b00001,0b00010,0b00110,0b00001,0b10001,0b01110],
+  '4':  [0b00010,0b00110,0b01010,0b10010,0b11111,0b00010,0b00010],
+  '5':  [0b11111,0b10000,0b11110,0b00001,0b00001,0b10001,0b01110],
+  '6':  [0b00110,0b01000,0b10000,0b11110,0b10001,0b10001,0b01110],
+  '7':  [0b11111,0b00001,0b00010,0b00100,0b01000,0b01000,0b01000],
+  '8':  [0b01110,0b10001,0b10001,0b01110,0b10001,0b10001,0b01110],
+  '9':  [0b01110,0b10001,0b10001,0b01111,0b00001,0b00010,0b01100],
+  '-':  [0b00000,0b00000,0b00000,0b11111,0b00000,0b00000,0b00000],
+  '.':  [0b00000,0b00000,0b00000,0b00000,0b00000,0b00110,0b00110],
+  ':':  [0b00000,0b00110,0b00110,0b00000,0b00110,0b00110,0b00000],
+  '[':  [0b01110,0b01000,0b01000,0b01000,0b01000,0b01000,0b01110],
+  ']':  [0b01110,0b00010,0b00010,0b00010,0b00010,0b00010,0b01110],
+};
+
+function drawText5x7(img, text, startX, startY, scale, r, g, b) {
+    const { rgbaToInt } = require('jimp');
+    const charW = 5 * scale, charH = 7 * scale, gap = scale;
+    let x = startX;
+    for (const ch of text.toUpperCase()) {
+        const glyph = FONT5X7[ch] || FONT5X7[' '];
+        for (let row = 0; row < 7; row++) {
+            for (let col = 0; col < 5; col++) {
+                if (glyph[row] & (1 << (4 - col))) {
+                    for (let sy = 0; sy < scale; sy++)
+                        for (let sx = 0; sx < scale; sx++)
+                            img.setPixelColor(
+                                rgbaToInt(r, g, b, 255),
+                                x + col * scale + sx,
+                                startY + row * scale + sy
+                            );
+                }
+            }
+        }
+        x += charW + gap;
+    }
+}
+
+app.get('/ph-image', async (req, res) => {
     const name  = (req.query.name  || 'LIVE TV').trim();
     const w     = Math.min(Math.max(parseInt(req.query.w, 10) || 400, 100), 1920);
     const h     = Math.min(Math.max(parseInt(req.query.h, 10) || 600, 100), 1080);
     const cacheKey = `${w}x${h}:${name}`;
 
     const cached = phImageCache.get(cacheKey);
-    if (cached) {
-        res.setHeader('Content-Type', 'image/svg+xml');
+    if (cached && (Date.now() - cached.ts) < PH_IMAGE_CACHE_TTL_MS) {
+        res.setHeader('Content-Type', 'image/png');
         res.setHeader('Cache-Control', 'public, max-age=86400');
-        return res.send(cached);
+        return res.send(cached.buffer);
     }
 
-    const isPortrait = h > w;
-    const is169      = !isPortrait && (w / h) > 1.5;
-    const PAD_X   = Math.round(w * (is169 ? 0.06 : 0.08));
-    const PAD_Y   = Math.round(h * (is169 ? 0.12 : 0.10));
-    const maxW    = w - PAD_X * 2;
-    const maxH    = h - PAD_Y * 2;
-    const words   = name.split(' ');
+    try {
+        const { Jimp, rgbaToInt } = require('jimp');
 
-    let fontSize, lines;
-    const startFontSize = isPortrait ? Math.round(Math.min(w, h) * 0.144)
-                        : is169     ? Math.round(h * 0.08)
-                        :             Math.round(Math.min(w, h) * 0.13);
-    for (fontSize = startFontSize; fontSize >= 18; fontSize -= 2) {
-        const charW    = fontSize * 0.58;
-        const maxChars = Math.floor(maxW / charW);
-        const wrapped  = [];
+        // Calcola scala font in base alle dimensioni canvas
+        const minDim = Math.min(w, h);
+        let scale = Math.max(1, Math.floor(minDim / 80));  // es: 400px → scale=5
+
+        // Word-wrap: spezza il nome in righe che stanno nel canvas
+        const charW = (5 + 1) * scale;
+        const maxChars = Math.floor((w * 0.85) / charW);
+        const words = name.toUpperCase().split(' ');
+        const lines = [];
         let cur = '';
         for (const word of words) {
             const test = cur ? `${cur} ${word}` : word;
-            if (test.length > maxChars && cur) { wrapped.push(cur); cur = word; }
+            if (test.length > maxChars && cur) { lines.push(cur); cur = word; }
             else cur = test;
         }
-        if (cur) wrapped.push(cur);
-        const lineH  = fontSize * 1.25;
-        const totalH = wrapped.length * lineH;
-        if (totalH <= maxH) { lines = wrapped; break; }
+        if (cur) lines.push(cur);
+
+        // Ri-aggiusta scala se troppo alto
+        const charH = (7 + 2) * scale;
+        const totalTextH = lines.length * charH;
+        if (totalTextH > h * 0.8 && scale > 1) scale = Math.max(1, scale - 1);
+
+        // Disegna
+        const canvas = new Jimp({ width: w, height: h, color: 0x1a1a2eff }); // #1a1a2e
+        const lineH = (7 + 2) * scale;
+        const totalH = lines.length * lineH;
+        let y = Math.round((h - totalH) / 2);
+        for (const line of lines) {
+            const lineW = line.length * ((5 + 1) * scale);
+            const x = Math.round((w - lineW) / 2);
+            drawText5x7(canvas, line, x, y, scale, 0xcc, 0x55, 0x00); // #cc5500
+            y += lineH;
+        }
+
+        const buffer = await canvas.getBuffer('image/png');
+        phImageCache.set(cacheKey, { buffer, ts: Date.now() });
+
+        res.setHeader('Content-Type', 'image/png');
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        res.send(buffer);
+    } catch (e) {
+        logger.error('_', 'ph-image error:', e.message);
+        // Fallback: sfondo scuro senza testo
+        try {
+            const { Jimp } = require('jimp');
+            const buf = await new Jimp({ width: w, height: h, color: 0x1a1a2eff }).getBuffer('image/png');
+            res.setHeader('Content-Type', 'image/png');
+            res.setHeader('Cache-Control', 'no-store');
+            res.send(buf);
+        } catch(e2) { res.status(500).send('error'); }
     }
-    if (!lines) lines = [name.substring(0, 20)];
-
-    const lineH  = fontSize * 1.25;
-    const totalH = lines.length * lineH;
-    const startY = (h - totalH) / 2 + fontSize * 0.85;
-
-    const tspans = lines.map((l, i) =>
-        `<tspan x="50%" dy="${i === 0 ? 0 : lineH}">${l.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</tspan>`
-    ).join('');
-
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
-  <rect width="${w}" height="${h}" fill="#1a1a2e"/>
-  <text x="50%" y="${Math.round(startY)}" text-anchor="middle"
-        font-family="Montserrat, Arial, sans-serif" font-weight="700"
-        font-size="${fontSize}" fill="#cc5500">
-    ${tspans}
-  </text>
-</svg>`;
-
-    phImageCache.set(cacheKey, svg);
-    res.setHeader('Content-Type', 'image/svg+xml');
-    res.setHeader('Cache-Control', 'public, max-age=86400');
-    res.send(svg);
 });
 
 // GET /clear-logo-cache — svuota la cache in-memory di logo-image e bg-image
