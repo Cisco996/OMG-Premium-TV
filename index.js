@@ -527,6 +527,12 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
         const rawUrl  = decodeURIComponent(req.params.encodedUrl);
         const logoUrl = normalizeImageUrl(rawUrl); // fix GitHub blob URLs
 
+        // Se l'URL è un SVG, fallback diretto al placeholder testo (Stremio non supporta SVG)
+        if (/\.svg(\?.*)?$/i.test(logoUrl)) {
+            res.setHeader('Cache-Control', 'no-store');
+            return res.redirect(302, fallbackUrl);
+        }
+
         // Cache hit
         const cached = bgImageCache.get(logoUrl);
         if (cached && (Date.now() - cached.ts) < BG_IMAGE_CACHE_TTL_MS) {
@@ -630,7 +636,8 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
         res.send(buffer);
     } catch (e) {
         logger.error('_', 'bg-image error, falling back to placeholder:', e.message);
-        // Redirect a /ph-image interno (SVG con nome canale) invece di placehold.co
+        // Redirect a /ph-image interno — no-store così il client non cacha il fallback
+        res.setHeader('Cache-Control', 'no-store');
         res.redirect(302, fallbackUrl);
     }
 });
@@ -652,9 +659,16 @@ app.get('/logo-image', async (req, res) => {
     const baseUrl     = `${req.protocol}://${req.get('host')}`;
     const fallbackUrl = `${baseUrl}/ph-image?name=${encodeURIComponent(channelName)}&w=${w}&h=${h}`;
 
-    if (!rawUrl) return res.redirect(302, fallbackUrl);
+    if (!rawUrl) { res.setHeader('Cache-Control', 'no-store'); return res.redirect(302, fallbackUrl); }
 
     const logoUrl  = normalizeImageUrl(rawUrl);
+
+    // Se l'URL è un SVG, fallback diretto al placeholder testo (Stremio non supporta SVG)
+    if (/\.svg(\?.*)?$/i.test(logoUrl)) {
+        res.setHeader('Cache-Control', 'no-store');
+        return res.redirect(302, fallbackUrl);
+    }
+
     const cacheKey = `${transparent ? 'T' : 'S'}:${w}x${h}:${logoUrl}`;
 
     // Cache hit
@@ -763,10 +777,14 @@ app.get('/logo-image', async (req, res) => {
         res.send(outputBuffer);
     } catch (e) {
         logger.error('_', `logo-image error for ${logoUrl}, falling back to placeholder:`, e.message);
-        if (!res.headersSent) res.redirect(302, fallbackUrl);
+        if (!res.headersSent) { res.setHeader('Cache-Control', 'no-store'); res.redirect(302, fallbackUrl); }
     }
 });
 
+// GET /ph-image?name=NOME&w=400&h=600
+// Genera un SVG con sfondo scuro, testo arancione centrato e word-wrap automatico.
+// Usato al posto di placehold.co per i canali senza logo — testo sempre leggibile
+// su TV indipendentemente dal formato (poster, landscape, background).
 // GET /ph-image?name=NOME&w=400&h=600
 // Genera un SVG con sfondo scuro, testo arancione centrato e word-wrap automatico.
 // Usato al posto di placehold.co per i canali senza logo — testo sempre leggibile
@@ -787,7 +805,6 @@ app.get('/ph-image', (req, res) => {
 
     const isPortrait = h > w;
     const is169      = !isPortrait && (w / h) > 1.5;
-    // Padding proporzionale: più generoso per 16:9 così il testo ha più spazio orizzontale
     const PAD_X   = Math.round(w * (is169 ? 0.06 : 0.08));
     const PAD_Y   = Math.round(h * (is169 ? 0.12 : 0.10));
     const maxW    = w - PAD_X * 2;
@@ -795,7 +812,6 @@ app.get('/ph-image', (req, res) => {
     const words   = name.split(' ');
 
     let fontSize, lines;
-    // fontSize iniziale: per 16:9 parte basso (h*0.08=57px) così nomi lunghi wrappano subito
     const startFontSize = isPortrait ? Math.round(Math.min(w, h) * 0.144)
                         : is169     ? Math.round(h * 0.08)
                         :             Math.round(Math.min(w, h) * 0.13);
@@ -837,6 +853,19 @@ app.get('/ph-image', (req, res) => {
     res.setHeader('Content-Type', 'image/svg+xml');
     res.setHeader('Cache-Control', 'public, max-age=86400');
     res.send(svg);
+});
+
+// GET /clear-logo-cache — svuota la cache in-memory di logo-image e bg-image
+// Utile dopo aver aggiornato i loghi o dopo fix: il client riceverà immagini fresche
+app.get('/clear-logo-cache', (req, res) => {
+    const lg = logoImageCache.size;
+    const bg = bgImageCache.size;
+    const ph = phImageCache.size;
+    logoImageCache.clear();
+    bgImageCache.clear();
+    phImageCache.clear();
+    logger.log('_', `Logo cache cleared: logo=${lg}, bg=${bg}, ph=${ph}`);
+    res.json({ success: true, cleared: { logoImage: lg, bgImage: bg, phImage: ph } });
 });
 
 //route download template
