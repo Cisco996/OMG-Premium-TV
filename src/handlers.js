@@ -93,7 +93,11 @@ function buildPlaceholderUrl(channelName, size) {
 function buildPosterUrl(imageUrl, w, h, channelName) {
     const fallback = buildPlaceholderUrl(channelName, `${w}x${h}`);
     if (!imageUrl) return fallback;
-    const defaultParam = encodeURIComponent(fallback);
+    // landscape (600x400) richiede double-encode: weserv decodifica &default= una volta,
+    // quindi placehold.co riceve i query params correttamente encodati
+    const defaultParam = (w === 600 && h === 400)
+        ? encodeURIComponent(encodeURIComponent(fallback))
+        : encodeURIComponent(fallback);
     return `https://images.weserv.nl/?url=${encodeURIComponent(imageUrl)}&w=${w}&h=${h}&fit=contain&cbg=1a1a2e&default=${defaultParam}`;
 }
 
