@@ -43,7 +43,7 @@ function buildPosterUrl(imageUrl, shape = 'poster', baseUrl = null, channelName 
     if (shape === 'landscape') {
         // 3:2 — stessa logica di handlers.js (cbg + singolo encode)
         const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '600x400'));
-        return `${base}&w=600&h=400&fit=contain&cbg=1a1a2e&default=${fb}`;
+        return `${base}&w=600&h=400&fit=contain&default=${fb}`;
     }
     if (shape === 'square') {
         const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '400x400'));
