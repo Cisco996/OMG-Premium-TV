@@ -41,9 +41,9 @@ function buildPosterUrl(imageUrl, shape = 'poster', baseUrl = null, channelName 
     const base = 'https://images.weserv.nl/?url=' + encodeURIComponent(imageUrl);
     const BG = '1a1a2e'; // sfondo blu scuro coerente con placeholder
     if (shape === 'landscape') {
-        // 3:2 — cover con sfondo blu: riempie il canvas senza zoom eccessivo
-        const fb = encodeURIComponent(encodeURIComponent(buildPlaceholderUrl(channelName, '600x400')));
-        return `${base}&w=600&h=400&fit=contain&default=${fb}`;
+        // 3:2 — stessa logica di handlers.js (cbg + singolo encode)
+        const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '600x400'));
+        return `${base}&w=600&h=400&fit=contain&cbg=1a1a2e&default=${fb}`;
     }
     if (shape === 'square') {
         const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '400x400'));
@@ -56,7 +56,7 @@ function buildPosterUrl(imageUrl, shape = 'poster', baseUrl = null, channelName 
         if (baseUrl) return `${baseUrl}/bg-image/${encodeURIComponent(imageUrl)}?name=${encodeURIComponent(channelName || '')}`;
         // Fallback weserv se baseUrl non disponibile
         const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '1280x720'));
-        return `${base}&w=1280&h=720&fit=contain&bg=blur&default=${fb}`;
+        return `${base}&w=1280&h=720&fit=contain&cbg=1a1a2e&default=${fb}`;
     }
     // default: poster 2:3 — contain puro, sfondo trasparente con barre blu native Stremio
     const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '400x600'));
@@ -186,7 +186,7 @@ async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epg
         // Placeholder placehold.co — pre-calcolati, usati solo se nessun logo disponibile
         const hasLogo      = !!(channel.logo || channel.poster);
         const phPoster     = hasLogo ? null : buildPlaceholderUrl(channelDisplayName, '400x600');
-        const phLandscape  = buildPlaceholderUrl(channelDisplayName, '600x400');
+        const phLandscape  = hasLogo ? null : buildPlaceholderUrl(channelDisplayName, '600x400');
         const phBackground = hasLogo ? null : buildPlaceholderUrl(channelDisplayName, '1280x720');
 
         const meta = {
@@ -200,7 +200,7 @@ async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epg
             // background → endpoint /bg-image: logo 40% centrato su canvas 1280x720 con sfondo sfocato
             background:  buildPosterUrl(channel.background || channel.logo, 'background', baseUrl, channelDisplayName) || phBackground,
             // logo → 3:2, weserv contain + sfondo blu #1a1a2e
-            logo:        (channel.logo ? buildPosterUrl(channel.logo, 'landscape', null, channelDisplayName) : null) || phLandscape,
+            logo:        buildPosterUrl(channel.logo, 'landscape', null, channelDisplayName)                          || phLandscape,
             description: '',
             releaseInfo: 'LIVE',
             genre:       channel.genre,
