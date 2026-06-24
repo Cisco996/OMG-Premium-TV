@@ -93,10 +93,7 @@ function buildPlaceholderUrl(channelName, size) {
 function buildPosterUrl(imageUrl, w, h, channelName) {
     const fallback = buildPlaceholderUrl(channelName, `${w}x${h}`);
     if (!imageUrl) return fallback;
-    // Double-encode the fallback: weserv decodes &default= once before fetching,
-    // so a single encodeURIComponent causes placehold.co to receive a truncated URL
-    // (the query params get stripped), making it show "600x400" as default text.
-    const defaultParam = encodeURIComponent(encodeURIComponent(fallback));
+    const defaultParam = encodeURIComponent(fallback);
     return `https://images.weserv.nl/?url=${encodeURIComponent(imageUrl)}&w=${w}&h=${h}&fit=contain&cbg=1a1a2e&default=${defaultParam}`;
 }
 

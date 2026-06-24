@@ -59,7 +59,7 @@ function buildPosterUrl(imageUrl, shape = 'poster', baseUrl = null, channelName 
         return `${base}&w=1280&h=720&fit=contain&bg=blur&default=${fb}`;
     }
     // default: poster 2:3 — contain puro, sfondo trasparente con barre blu native Stremio
-    const fb = encodeURIComponent(encodeURIComponent(buildPlaceholderUrl(channelName, '400x600')));
+    const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '400x600'));
     return `${base}&w=400&h=600&fit=contain&default=${fb}`;
 }
 
