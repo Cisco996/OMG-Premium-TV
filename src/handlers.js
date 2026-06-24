@@ -97,11 +97,14 @@ function buildPosterUrl(imageUrl, w, h, channelName) {
     return `https://images.weserv.nl/?url=${encodeURIComponent(imageUrl)}&w=${w}&h=${h}&fit=contain&cbg=1a1a2e&default=${defaultParam}`;
 }
 
-// Per il logo 600x400 usa sempre il placeholder direttamente, senza weserv:
-// weserv non riesce a passare i query params di placehold.co nel &default=,
-// quindi alcuni canali mostravano uno spazio vuoto invece del nome.
-function buildLogoUrl(channelName) {
-    return buildPlaceholderUrl(channelName, '600x400');
+// Per il logo 600x400: se il canale ha un logo reale, usa weserv con il placeholder
+// come default (double-encoded per passare correttamente i query params a placehold.co).
+// Se non ha logo, usa il placeholder direttamente.
+function buildLogoUrl(imageUrl, channelName) {
+    const fallback = buildPlaceholderUrl(channelName, '600x400');
+    if (!imageUrl) return fallback;
+    const defaultParam = encodeURIComponent(encodeURIComponent(fallback));
+    return `https://images.weserv.nl/?url=${encodeURIComponent(imageUrl)}&w=600&h=400&fit=contain&cbg=1a1a2e&default=${defaultParam}`;
 }
 
 async function catalogHandler({ type, id, extra, config: userConfig, cacheManager: cm, epgManager: em, pythonResolver, pythonRunner }) {
@@ -175,7 +178,7 @@ async function catalogHandler({ type, id, extra, config: userConfig, cacheManage
                 name: `${channel.name} [${languageAbbr}]`,
                 poster: buildPosterUrl(rawIcon, 400, 600, channel.name),
                 background: rawIcon ? buildPosterUrl(channel.background || channel.logo, 1280, 720, channel.name) : null,
-                logo: buildLogoUrl(channel.name),
+                logo: buildLogoUrl(channel.logo, channel.name),
                 description: channel.description || `Channel: ${channel.name} - ID: ${channel.streamInfo?.tvg?.id}`,
                 genre: channel.genre,
                 posterShape: channel.posterShape || 'poster',
@@ -196,7 +199,7 @@ async function catalogHandler({ type, id, extra, config: userConfig, cacheManage
                 if (epgIcon) {
                     meta.poster = buildPosterUrl(epgIcon, 400, 600, channel.name);
                     meta.background = buildPosterUrl(epgIcon, 1280, 720, channel.name);
-                    meta.logo = buildLogoUrl(channel.name);
+                    meta.logo = buildLogoUrl(channel.logo, channel.name);
                 }
             }
 
@@ -476,7 +479,7 @@ async function streamHandler({ id, config: userConfig, cacheManager: cm, epgMana
             name: channel.name,
             poster: buildPosterUrl(rawIcon, 400, 600, channel.name),
             background: rawIcon ? buildPosterUrl(channel.background || channel.logo, 1280, 720, channel.name) : null,
-            logo: buildLogoUrl(channel.name),
+            logo: buildLogoUrl(channel.logo, channel.name),
             description: channel.description || `Channel ID: ${channel.streamInfo?.tvg?.id}`,
             genre: channel.genre,
             posterShape: channel.posterShape || 'poster',
@@ -493,7 +496,7 @@ async function streamHandler({ id, config: userConfig, cacheManager: cm, epgMana
             if (epgIcon) {
                 meta.poster = buildPosterUrl(epgIcon, 400, 600, channel.name);
                 meta.background = buildPosterUrl(epgIcon, 1280, 720, channel.name);
-                meta.logo = buildLogoUrl(channel.name);
+                meta.logo = buildLogoUrl(channel.logo, channel.name);
             }
         }
 

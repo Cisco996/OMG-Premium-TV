@@ -186,7 +186,7 @@ async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epg
         // Placeholder placehold.co — pre-calcolati, usati solo se nessun logo disponibile
         const hasLogo      = !!(channel.logo || channel.poster);
         const phPoster     = hasLogo ? null : buildPlaceholderUrl(channelDisplayName, '400x600');
-        const phLandscape  = hasLogo ? null : buildPlaceholderUrl(channelDisplayName, '600x400');
+        const phLandscape  = buildPlaceholderUrl(channelDisplayName, '600x400');
         const phBackground = hasLogo ? null : buildPlaceholderUrl(channelDisplayName, '1280x720');
 
         const meta = {
@@ -200,7 +200,7 @@ async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epg
             // background → endpoint /bg-image: logo 40% centrato su canvas 1280x720 con sfondo sfocato
             background:  buildPosterUrl(channel.background || channel.logo, 'background', baseUrl, channelDisplayName) || phBackground,
             // logo → 3:2, weserv contain + sfondo blu #1a1a2e
-            logo:        buildPosterUrl(channel.logo, 'landscape', null, channelDisplayName)                          || phLandscape,
+            logo:        channel.logo ? buildPosterUrl(channel.logo, 'landscape', null, channelDisplayName) : phLandscape,
             description: '',
             releaseInfo: 'LIVE',
             genre:       channel.genre,
