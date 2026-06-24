@@ -547,6 +547,18 @@ app.get('/bg-image/:encodedUrl', async (req, res) => {
         }
         if (currentLine) lines.push(currentLine);
         const text = lines.map(l => encodeURIComponent(l)).join('%0A');
+        // Stremio TV non segue i redirect 302 sulle immagini: scarichiamo il placeholder
+        // e lo restituiamo direttamente come PNG invece di fare redirect.
+        try {
+            const phUrl = `https://placehold.co/1280x720/1a1a2e/cc5500.png?font=montserrat&text=${text}&fontSize=160`;
+            const phResponse = await fetch(phUrl);
+            if (phResponse.ok) {
+                const phBuffer = Buffer.from(await phResponse.arrayBuffer());
+                res.setHeader('Content-Type', 'image/png');
+                res.setHeader('Cache-Control', 'public, max-age=86400');
+                return res.send(phBuffer);
+            }
+        } catch (_) {}
         res.redirect(302, `https://placehold.co/1280x720/1a1a2e/cc5500.png?font=montserrat&text=${text}&fontSize=160`);
     }
 });
