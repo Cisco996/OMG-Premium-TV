@@ -213,15 +213,21 @@ class PlaylistTransformer {
       const suffix = config?.id_suffix || ''; // Ottieni il suffisso dalla configurazione
       const finalChannelId = channelId + (suffix ? `.${suffix}` : ''); // Aggiungi il suffisso all'ID del canale
 
+      // Filtra URL logo inutilizzabili (Google thumbnail, ecc.) che restituiscono 404
+      const rawLogo = channel.tvg?.logo;
+      const BROKEN_LOGO_HOSTS = ['encrypted-tbn0.gstatic.com', 'encrypted-tbn1.gstatic.com', 'encrypted-tbn2.gstatic.com', 'encrypted-tbn3.gstatic.com'];
+      const isLogoValid = rawLogo && !BROKEN_LOGO_HOSTS.some(h => rawLogo.includes(h));
+      const logo = isLogoValid ? rawLogo : null;
+
       return {
           id: `tv|${finalChannelId}`, // Usa l'ID con il suffisso
           type: 'tv',
           name: cleanName,
           genre: channel.group,
           posterShape: 'poster',
-          poster: channel.tvg?.logo,
-          background: channel.tvg?.logo,
-          logo: channel.tvg?.logo,
+          poster: logo,
+          background: logo,
+          logo: logo,
           description: `Channel: ${cleanName} - ID: ${finalChannelId}`,
           runtime: 'LIVE',
           behaviorHints: {
