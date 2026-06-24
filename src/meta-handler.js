@@ -46,7 +46,7 @@ function buildPosterUrl(imageUrl, shape = 'poster', baseUrl = null, channelName 
         return `${base}&w=600&h=400&fit=contain&default=${fb}`;
     }
     if (shape === 'square') {
-        const fb = encodeURIComponent(encodeURIComponent(buildPlaceholderUrl(channelName, '400x400')));
+        const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '400x400'));
         return `${base}&w=400&h=400&fit=contain&bg=${BG}&default=${fb}`;
     }
     if (shape === 'background') {
@@ -55,7 +55,7 @@ function buildPosterUrl(imageUrl, shape = 'poster', baseUrl = null, channelName 
         // col nome se il link del logo è rotto/irraggiungibile.
         if (baseUrl) return `${baseUrl}/bg-image/${encodeURIComponent(imageUrl)}?name=${encodeURIComponent(channelName || '')}`;
         // Fallback weserv se baseUrl non disponibile
-        const fb = encodeURIComponent(encodeURIComponent(buildPlaceholderUrl(channelName, '1280x720')));
+        const fb = encodeURIComponent(buildPlaceholderUrl(channelName, '1280x720'));
         return `${base}&w=1280&h=720&fit=contain&bg=blur&default=${fb}`;
     }
     // default: poster 2:3 — contain puro, sfondo trasparente con barre blu native Stremio
@@ -200,7 +200,7 @@ async function metaHandler({ type, id, config: userConfig, cacheManager: cm, epg
             // background → endpoint /bg-image: logo 40% centrato su canvas 1280x720 con sfondo sfocato
             background:  buildPosterUrl(channel.background || channel.logo, 'background', baseUrl, channelDisplayName) || phBackground,
             // logo → 3:2, weserv contain + sfondo blu #1a1a2e
-            logo:        channel.logo ? buildPosterUrl(channel.logo, 'landscape', null, channelDisplayName) : phLandscape,
+            logo:        (channel.logo ? buildPosterUrl(channel.logo, 'landscape', null, channelDisplayName) : null) || phLandscape,
             description: '',
             releaseInfo: 'LIVE',
             genre:       channel.genre,
